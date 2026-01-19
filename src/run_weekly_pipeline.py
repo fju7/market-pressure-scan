@@ -59,7 +59,15 @@ def main():
         "--week_end", args.week_end
     ])
 
-    # 7) Backtest (optional, skipped for single week runs)
+    # 7) Export basket
+    sh([
+        py, "-m", "src.export_basket",
+        "--week_end", args.week_end,
+        "--top_n", "20",
+        "--skip_low_info"
+    ])
+
+    # 8) Backtest (optional, skipped for single week runs)
     # The backtest requires --from_week_end and --to_week_end for multi-week backtests
     # For single week pipeline runs, it doesn't make sense to run backtest
     if not args.skip_backtest:

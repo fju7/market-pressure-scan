@@ -229,7 +229,7 @@ def build_report_markdown(
     enriched: pd.DataFrame,
     top_n: int = 20,
     bottom_n: int = 20,
-) -> str:
+) -> Tuple[str, Dict[str, Any]]:
     # Merge scores + features to enable richer narrative
     df = scores.merge(feats, on=["symbol", "sector", "asof_date"], how="left", suffixes=("", "_f"))
 
@@ -279,6 +279,8 @@ def build_report_markdown(
         low_info_reasons.append(f"only {len(enriched)} total clusters")
     if abs(avg_novelty) < 0.10 and abs(avg_evs) < 0.10:
         low_info_reasons.append("novelty and event intensity are near zero on average")
+
+    is_low_information_week = bool(low_info_reasons)
 
     if low_info_reasons:
         summary_lines.append("")
@@ -436,14 +438,25 @@ def build_report_markdown(
     summary_lines.append("- A substitute for portfolio-level risk management")
     summary_lines.append("")
 
-    return "\n".join(summary_lines)
+    # Prepare metadata
+    meta = {
+        "week_ending_date": week_end,
+        "is_low_information_week": is_low_information_week,
+        "low_info_reasons": low_info_reasons,
+        "recap_pct": float(recap_pct),
+        "avg_novelty_z": float(avg_novelty) if np.isfinite(avg_novelty) else None,
+        "avg_event_intensity_z": float(avg_evs) if np.isfinite(avg_evs) else None,
+        "cluster_count": int(len(enriched)),
+    }
+
+    return "\n".join(summary_lines), meta
 
 
 def run(week_end: str, top_n: int = 20, bottom_n: int = 20) -> Path:
     paths = default_paths()
     scores, feats, clusters, enriched = load_week(paths, week_end)
 
-    md = build_report_markdown(
+    md, meta = build_report_markdown(
         week_end=week_end,
         scores=scores,
         feats=feats,
@@ -455,10 +468,15 @@ def run(week_end: str, top_n: int = 20, bottom_n: int = 20) -> Path:
 
     out_dir = paths.reports_dir / f"week_ending={week_end}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    
     out_path = out_dir / "weekly_report.md"
     out_path.write_text(md, encoding="utf-8")
-
     print(f"Wrote: {out_path}")
+
+    meta_path = out_dir / "report_meta.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    print(f"Wrote: {meta_path}")
+
     return out_path
 
 
