@@ -341,6 +341,9 @@ def build_news_feature_panel(
     df["has_sent"] = df["sentiment_json"].notna()
     df["has_evt"] = df["event_json"].notna()
 
+    # Extract event type for filtering
+    df["event_type_primary"] = df["event"].apply(lambda e: str(e.get("event_type_primary", "")) if isinstance(e, dict) else "")
+
     # Compute per-rep sentiment final score
     sent_out = df["sentiment"].apply(compute_rep_sent_score_final)
     df["sent_score_final"] = [t[0] for t in sent_out]
@@ -351,6 +354,13 @@ def build_news_feature_panel(
     if "unique_sources" not in df.columns:
         df["unique_sources"] = 1.0
     df["sev_final"] = df.apply(lambda r: compute_event_sev_final(r["event"], unique_sources=float(r["unique_sources"])), axis=1)
+
+    # If it's just market wrap / price recap, treat as low information content
+    # neutralize information-driven components
+    is_price_recap = df["event_type_primary"] == "PRICE_ACTION_RECAP"
+    df["low_info_flag"] = is_price_recap.astype(int)
+    df.loc[is_price_recap, "sent_score_final"] = 0.0
+    df.loc[is_price_recap, "sev_final"] = 0.0
 
     # Echo features
     if "cluster_size" not in df.columns:
@@ -588,6 +598,10 @@ def compute_scores(
     # Volatility penalty (v1): if VR_pct > 0.90, shrink to 85%
     df["UPS_adj"] = np.where(df["VR_pct"].fillna(0.0) > 0.90, df["UPS_raw"] * 0.85, df["UPS_raw"])
     df["DPS_adj"] = np.where(df["VR_pct"].fillna(0.0) > 0.90, df["DPS_raw"] * 0.85, df["DPS_raw"])
+
+    # Exclude benchmark/ETF from ranked universe (keep SPY only for market regime context)
+    if "symbol" in df.columns:
+        df = df[df["symbol"].astype(str).str.upper().str.strip() != "SPY"].copy()
 
     # Ranks
     df["rank_UPS"] = df["UPS_adj"].rank(ascending=False, method="min").astype(int)

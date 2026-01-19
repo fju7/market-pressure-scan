@@ -51,7 +51,8 @@ def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str) 
             "headline": item.get("headline", ""),
             "summary": item.get("summary", ""),
             "source": item.get("source", ""),
-            "url": item.get("url", "")
+            "url": item.get("url", ""),
+            "related": item.get("related", "")
         })
     
     return pd.DataFrame(records)
@@ -106,13 +107,27 @@ def main(universe_path: str, week_end: str):
     if not all_news:
         print("⚠️  No news data fetched - creating empty placeholder")
         # Create empty DataFrame with correct schema
-        combined = pd.DataFrame(columns=["symbol", "published_utc", "headline", "summary", "source", "url"])
+        combined = pd.DataFrame(columns=["symbol", "published_utc", "headline", "summary", "source", "url", "related"])
     else:
         # Combine all data
         combined = pd.concat(all_news, ignore_index=True)
         
         # Sort by symbol and published date
         combined = combined.sort_values(["symbol", "published_utc"]).reset_index(drop=True)
+        
+        # --- Relevance filter (v1) - DISABLED for now ---
+        # Many feeds include market wrap content; keep items likely related to the symbol.
+        # NOTE: Finnhub company-news endpoint already filters by symbol, so additional filtering
+        # is too aggressive and removes valid articles. Consider re-enabling with company name matching.
+        # text = (combined["headline"].fillna("") + " " + combined["summary"].fillna("")).str.upper()
+        # sym = combined["symbol"].astype(str).str.upper().str.strip()
+        # rel = combined["related"].fillna("").astype(str).str.upper()
+        # mask_ticker_in_text = text.str.contains(sym, regex=False)
+        # mask_ticker_in_related = rel.str.contains(sym, regex=False)
+        # before_filter = len(combined)
+        # combined = combined[mask_ticker_in_text | mask_ticker_in_related].copy()
+        # print(f"   Relevance filter: {before_filter:,} → {len(combined):,} articles ({100*len(combined)/before_filter:.1f}% retained)")
+        # print(f"[INFO] relevance filter kept {len(combined):,} rows")
     
     # Save to parquet
     output_dir = Path("data/derived/news_raw") / f"week_ending={week_end}"

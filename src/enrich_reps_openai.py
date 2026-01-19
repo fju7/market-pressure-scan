@@ -172,11 +172,20 @@ def run(
         df = df.head(limit).copy()
     print(f"[INFO] clusters to process: {len(df):,}")
 
+    # Handle empty input
+    if len(df) == 0:
+        print(f"[INFO] No clusters to process. Creating empty output.")
+        out_parquet.parent.mkdir(parents=True, exist_ok=True)
+        empty_df = pd.DataFrame(columns=["symbol", "cluster_id", "embedding", "sentiment_json", "event_json"])
+        empty_df.to_parquet(out_parquet, index=False)
+        print(f"Wrote: {out_parquet} (0 rows)")
+        return
+
     # Skip already enriched clusters if output exists
     existing = None
     if out_parquet.exists():
         existing = pd.read_parquet(out_parquet)
-        if "cluster_id" in existing.columns:
+        if "cluster_id" in existing.columns and len(existing) > 0:
             done = set(existing["cluster_id"].astype(str).tolist())
             before = len(df)
             df = df[~df["cluster_id"].astype(str).isin(done)].copy()
