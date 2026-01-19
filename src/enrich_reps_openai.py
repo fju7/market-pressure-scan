@@ -156,7 +156,7 @@ def run(
     sleep_s: float = 0.0,
     limit: int | None = None,
     jaccard_threshold: float = 0.55,
-    max_clusters_per_symbol: int = 2,
+    max_clusters_per_symbol: int = 1,
 ) -> Path:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
@@ -171,6 +171,17 @@ def run(
     if limit is not None:
         df = df.head(limit).copy()
     print(f"[INFO] clusters to process: {len(df):,}")
+
+    # Skip already enriched clusters if output exists
+    existing = None
+    if out_parquet.exists():
+        existing = pd.read_parquet(out_parquet)
+        if "cluster_id" in existing.columns:
+            done = set(existing["cluster_id"].astype(str).tolist())
+            before = len(df)
+            df = df[~df["cluster_id"].astype(str).isin(done)].copy()
+            print(f"[INFO] resume: {before:,} clusters loaded, {len(done):,} already enriched, {len(df):,} remaining")
+
     for col in ["symbol","cluster_id","rep_published_utc","rep_headline","rep_summary"]:
         if col not in df.columns:
             raise RuntimeError(f"clusters.parquet missing required column: {col}")
@@ -219,7 +230,8 @@ def run(
         if sleep_s:
             time.sleep(sleep_s)
 
-    out = pd.DataFrame({
+
+    new_out = pd.DataFrame({
         "week_ending_date": week_end,
         "symbol": df["symbol"].astype(str),
         "cluster_id": df["cluster_id"].astype(str),
@@ -229,6 +241,13 @@ def run(
         "embedding_model": emb_model,
         "classifier_model": cls_model,
     })
+
+    if out_parquet.exists():
+        old = pd.read_parquet(out_parquet)
+        out = pd.concat([old, new_out], ignore_index=True)
+        out = out.drop_duplicates(subset=["cluster_id"], keep="last")
+    else:
+        out = new_out
 
     out_parquet.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_parquet, index=False)
@@ -246,7 +265,7 @@ if __name__ == "__main__":
     ap.add_argument("--emb_batch_size", type=int, default=128)
     ap.add_argument("--sleep_s", type=float, default=0.0)
     ap.add_argument("--limit", type=int, default=None, help="Limit number of clusters for testing")
-    ap.add_argument("--max_clusters_per_symbol", type=int, default=2)
+    ap.add_argument("--max_clusters_per_symbol", type=int, default=1)
     args = ap.parse_args()
 
     clusters = args.clusters or f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
