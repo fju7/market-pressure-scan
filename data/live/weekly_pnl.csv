@@ -1,5 +1,3 @@
-week_ending_date,symbol,entry_price,exit_price,return_pct,benchmark_return_pct,active_return_pct,notes
-2026-01-09,AAPL,270.64,259.37,-4.164203369790121,1.096804264864405,-5.261007634654526,Auto-calculated from candles (Mon open → Fri close)
-2026-01-09,MSFT,474.055,479.28,1.1021927835377678,1.096804264864405,0.005388518673362874,Auto-calculated from candles (Mon open → Fri close)
-2026-01-09,JPM,325.5,329.19,1.133640552995391,1.096804264864405,0.03683628813098605,Auto-calculated from candles (Mon open → Fri close)
-2026-01-09,XOM,125.21,124.61,-0.47919495247982935,1.096804264864405,-1.5759992173442343,Auto-calculated from candles (Mon open → Fri close)
+week_ending_date,symbol,entry_price,exit_price,return_pct,benchmark_return_pct,active_return_pct,drivers,event_type_primary,conviction,signal_state,notes
+2026-01-02,AAPL,272.69,271.01,-0.6160841981737529,-0.6355993833086082,0.019515185134855284,,,Moderate,,Auto-calculated from candles (Mon open → Fri close)
+2026-01-02,MSFT,484.855,472.94,-2.457435728207406,-0.6355993833086082,-1.821836344898798,,,Moderate,,Auto-calculated from candles (Mon open → Fri close)
