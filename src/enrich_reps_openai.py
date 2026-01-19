@@ -181,6 +181,11 @@ def run(
             before = len(df)
             df = df[~df["cluster_id"].astype(str).isin(done)].copy()
             print(f"[INFO] resume: {before:,} clusters loaded, {len(done):,} already enriched, {len(df):,} remaining")
+            
+            # If nothing to process, we're done
+            if len(df) == 0:
+                print(f"[INFO] All clusters already enriched. Nothing to do.")
+                return
 
     for col in ["symbol","cluster_id","rep_published_utc","rep_headline","rep_summary"]:
         if col not in df.columns:
