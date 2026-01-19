@@ -39,20 +39,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Compute week_end (last Friday ET)
+      - name: Compute week_end (today if Friday else last Friday, ET)
         id: week_end
         run: |
           python - <<'PY'
           import datetime as dt
-          import os
           from zoneinfo import ZoneInfo
-          now = dt.datetime.now(ZoneInfo("America/New_York")).date()
-          # Monday=0 ... Sunday=6 ; Friday=4
-          days_since_fri = (now.weekday() - 4) % 7
-          week_end = now - dt.timedelta(days=days_since_fri)
-          print(f"week_end={week_end.isoformat()}")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"week_end={week_end.isoformat()}\n")
+
+          today = dt.datetime.now(ZoneInfo("America/New_York")).date()
+          # Monday=0 ... Friday=4
+          if today.weekday() == 4:
+              week_end = today
+          else:
+              days_since_fri = (today.weekday() - 4) % 7
+              week_end = today - dt.timedelta(days=days_since_fri)
+
+          print("week_end =", week_end.isoformat())
+          with open("week_end.txt", "w") as f:
+              f.write(week_end.isoformat())
           PY
 
       - name: Run weekly pipeline
@@ -60,11 +64,12 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python -m src.run_weekly_pipeline --week_end ${{ steps.week_end.outputs.week_end }} --max_clusters_per_symbol 1 --skip_backtest
-          python -m src.update_weekly_pnl --week_end ${{ steps.week_end.outputs.week_end }}
+          WEEK_END=$(cat week_end.txt)
+          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --max_clusters_per_symbol 1 --skip_backtest
+          python -m src.update_weekly_pnl --week_end "$WEEK_END"
           python -m src.scoreboard
-          python -m src.trader_sheet --week_end ${{ steps.week_end.outputs.week_end }}
-          python -m src.log_week_decision --week_end ${{ steps.week_end.outputs.week_end }}
+          python -m src.trader_sheet --week_end "$WEEK_END"
+          python -m src.log_week_decision --week_end "$WEEK_END"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -81,7 +86,8 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const week_end = '${{ steps.week_end.outputs.week_end }}';
+            const fs = require('fs');
+            const week_end = fs.readFileSync('week_end.txt', 'utf8').trim();
             const status = '${{ job.status }}';
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             
@@ -202,7 +208,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const week_end = '${{ steps.week_end.outputs.week_end }}';
+            const week_end = fs.readFileSync('week_end.txt', 'utf8').trim();
             
             // Find the issue we just created
             const issues = await github.rest.issues.listForRepo({
