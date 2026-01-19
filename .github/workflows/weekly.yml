@@ -21,18 +21,27 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Guard - only proceed at 4:05pm ET
+      - name: Guard - only proceed at 4:05pm ET (scheduled only)
         run: |
           python - <<'PY'
           import datetime as dt
           from zoneinfo import ZoneInfo
+          import os
+
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+          if event != "schedule":
+              print("Not a scheduled run; skipping time guard.")
+              raise SystemExit(0)
+
           now = dt.datetime.now(ZoneInfo("America/New_York"))
-          # Allow only 16:05 ET on Friday
           if not (now.weekday() == 4 and now.hour == 16 and now.minute == 5):
               print(f"Not 4:05pm ET Friday (now={now}). Exiting successfully.")
               raise SystemExit(0)
+
           print(f"Guard passed: now={now}")
           PY
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
 
       - name: Install deps
         run: |
