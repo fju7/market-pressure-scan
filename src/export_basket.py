@@ -26,7 +26,7 @@ def run(week_end: str, top_n: int, skip_low_info: bool, equal_weight: bool = Tru
             "action": "SKIP",
             "reason": "; ".join(meta.get("low_info_reasons", []))[:500],
         }])
-        df.to_csv(out_csv, index=False)
+        df.to_csv(out_csv, index=False, quoting=1)  # QUOTE_MINIMAL
         print(f"Wrote: {out_csv} (SKIP)")
         return out_csv
 
