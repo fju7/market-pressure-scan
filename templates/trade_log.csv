@@ -1,0 +1,2 @@
+date,time,symbol,side,shares,fill_price,fees,notes
+2026-01-20,09:30,MSFT,BUY,100,400.50,12.00,Monday rebalance week 1

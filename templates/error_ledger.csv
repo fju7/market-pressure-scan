@@ -1,0 +1,3 @@
+signal_week_end,symbol,conviction,rationale,weekly_return,what_happened,failure_tags,hypothesis
+2026-01-16,MSFT,Weak,Rank reflects a mix of weaker signals with no clear dominant driver.,0.025,Strong execution but signal overtaken by sector rotation,PRICE_ACTION_DOMINATED,News novelty insufficient to overcome macro headwinds
+2026-01-16,JPM,Weak,Ranked due to strong divergence: constructive news signals while recent price action remains weak.,-0.015,Divergence collapsed; duration repricing,WRONG_DIRECTION,Market repriced financial sector duration risk post-report
