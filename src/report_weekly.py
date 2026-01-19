@@ -274,12 +274,14 @@ def build_report_markdown(
         rank = int(r.get("rank_UPS", 0)) if np.isfinite(r.get("rank_UPS", np.nan)) else ""
         sym = r["symbol"]
         sec = r.get("sector", "Unknown")
-        ups = fmt_num(float(r.get("UPS_adj", np.nan)), 3)
-        conviction = conviction_band(float(r.get("UPS_adj", np.nan)))
+        ups_val = float(r.get("UPS_adj", np.nan))
+        ups = fmt_num(ups_val, 3)
+        conv = conviction_band(ups_val)
         drivers = driver_summary_row(r)
-        rationale = trunc(ranking_rationale(r), 80)
-        state = bucket_signal_state(float(r.get("IFS", np.nan)), float(r.get("z_AR5", np.nan)) if "z_AR5" in r.index else float(r.get("AR5", np.nan)))
-        summary_lines.append(f"| {rank} | {sym} | {sec} | {ups} | {conviction} | {drivers} | {rationale} | {state} |")
+        rat = ranking_rationale(r)
+        state = bucket_signal_state(float(r.get("IFS", np.nan)),
+                                    float(r.get("z_AR5", np.nan)) if "z_AR5" in r.index else float(r.get("AR5", np.nan)))
+        summary_lines.append(f"| {rank} | {sym} | {sec} | {ups} | {conv} | {drivers} | {rat} | {state} |")
 
     summary_lines.append("")
 
