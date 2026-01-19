@@ -270,6 +270,26 @@ def build_report_markdown(
     summary_lines.append(f"- Avg price-action news rate: {fmt_num(avg_price_action, 2)}")
     summary_lines.append(f"- PRICE_ACTION_RECAP (% of clusters): {recap_pct:.0f}%")
     summary_lines.append(f"- Sector mix (Top {len(top)}): {sec_summary if sec_summary else '—'}")
+
+    # --- Low-information week warning (v1) ---
+    low_info_reasons = []
+    if recap_pct >= 70:
+        low_info_reasons.append(f"{recap_pct:.0f}% of clusters are PRICE_ACTION_RECAP")
+    if len(enriched) < 50:
+        low_info_reasons.append(f"only {len(enriched)} total clusters")
+    if abs(avg_novelty) < 0.10 and abs(avg_evs) < 0.10:
+        low_info_reasons.append("novelty and event intensity are near zero on average")
+
+    if low_info_reasons:
+        summary_lines.append("")
+        summary_lines.append("## ⚠️ Low-information week")
+        summary_lines.append(
+            "The system is seeing mostly market wrap / price-move recap content rather than company-specific events. "
+            "Treat UPS/DPS rankings as *low conviction* this week."
+        )
+        for r in low_info_reasons:
+            summary_lines.append(f"- {r}")
+
     summary_lines.append("")
 
     # Top-20 table
