@@ -243,6 +243,13 @@ def build_report_markdown(
     avg_evs = float(np.nanmean(df.get("EVS", pd.Series(dtype=float)).to_numpy())) if "EVS" in df.columns else np.nan
     avg_price_action = float(np.nanmean(df.get("price_action_rate", pd.Series(dtype=float)).to_numpy())) if "price_action_rate" in df.columns else np.nan
 
+    # Calculate PRICE_ACTION_RECAP percentage from enriched data
+    if not enriched.empty and "event_json" in enriched.columns:
+        event_types = enriched["event_json"].apply(lambda x: safe_json_load(x).get("event_type_primary", "") if pd.notna(x) else "")
+        recap_pct = 100.0 * (event_types == "PRICE_ACTION_RECAP").mean()
+    else:
+        recap_pct = 0.0
+
     # Sector concentration (top basket)
     sec_counts = top["sector"].value_counts(dropna=False)
     sec_summary = ", ".join([f"{k}: {v}" for k, v in sec_counts.items()])
@@ -261,6 +268,7 @@ def build_report_markdown(
     summary_lines.append(f"- Avg novelty (z): {fmt_num(avg_novelty)}")
     summary_lines.append(f"- Avg event intensity (z): {fmt_num(avg_evs)}")
     summary_lines.append(f"- Avg price-action news rate: {fmt_num(avg_price_action, 2)}")
+    summary_lines.append(f"- PRICE_ACTION_RECAP (% of clusters): {recap_pct:.0f}%")
     summary_lines.append(f"- Sector mix (Top {len(top)}): {sec_summary if sec_summary else '—'}")
     summary_lines.append("")
 
