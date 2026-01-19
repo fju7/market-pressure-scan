@@ -134,6 +134,47 @@ def driver_summary_row(row: pd.Series) -> str:
     # keep it short
     return ", ".join(pieces[:2])
 
+def conviction_band(ups_adj: float) -> str:
+    """
+    Deterministic, conservative. Not a forecast—just signal strength.
+    """
+    if ups_adj is None or not np.isfinite(ups_adj):
+        return "—"
+    a = abs(float(ups_adj))
+    if a < 0.25:
+        return "Weak"
+    if a < 0.75:
+        return "Moderate"
+    return "Strong"
+
+
+def ranking_rationale(row: pd.Series) -> str:
+    """
+    One sentence, rule-based. Chooses the dominant driver.
+    Priority:
+      1) Strong market confirmation (MCS_up)
+      2) Information-driven (IFS + EVS)
+      3) Divergence (PD_up_raw)
+      4) Default mixed
+    """
+    mcs = float(row.get("MCS_up", np.nan))
+    ifs = float(row.get("IFS", np.nan))
+    evs = float(row.get("EVS", np.nan))
+    pd_up = float(row.get("PD_up_raw", np.nan))
+    ar5 = float(row.get("AR5", np.nan))
+
+    # Dominance checks (tuned to be conservative)
+    if np.isfinite(mcs) and mcs >= 0.60 and (not np.isfinite(ifs) or ifs < 0.35):
+        return "Ranked primarily due to recent price confirmation rather than new information."
+    if np.isfinite(ifs) and np.isfinite(evs) and (ifs + evs) >= 0.80 and (not np.isfinite(mcs) or mcs < 0.45):
+        return "Ranked due to information-driven news flow with limited price confirmation so far."
+    if np.isfinite(pd_up) and pd_up >= 0.75:
+        # Optional nuance: mention price direction if available
+        if np.isfinite(ar5) and ar5 < 0:
+            return "Ranked due to strong divergence: constructive news signals while recent price action remains weak."
+        return "Ranked due to divergence between news signals and recent price action."
+    return "Rank reflects a mix of weaker signals with no clear dominant driver."
+
 def top_clusters_for_symbol(
     clusters: pd.DataFrame,
     enriched: pd.DataFrame,
@@ -226,17 +267,19 @@ def build_report_markdown(
     # Top-20 table
     summary_lines.append(f"## Top {len(top)} Upside Pressure (UPS)")
     summary_lines.append("")
-    summary_lines.append("| Rank | Ticker | Sector | UPS_adj | Drivers | Signal state |")
-    summary_lines.append("|---:|:---|:---|---:|:---|:---|")
+    summary_lines.append("| Rank | Ticker | Sector | UPS_adj | Conviction | Drivers | Rationale | Signal state |")
+    summary_lines.append("|---:|:---|:---|---:|:---|:---|:---|:---|")
 
     for _, r in top.iterrows():
         rank = int(r.get("rank_UPS", 0)) if np.isfinite(r.get("rank_UPS", np.nan)) else ""
         sym = r["symbol"]
         sec = r.get("sector", "Unknown")
         ups = fmt_num(float(r.get("UPS_adj", np.nan)), 3)
+        conviction = conviction_band(float(r.get("UPS_adj", np.nan)))
         drivers = driver_summary_row(r)
+        rationale = trunc(ranking_rationale(r), 80)
         state = bucket_signal_state(float(r.get("IFS", np.nan)), float(r.get("z_AR5", np.nan)) if "z_AR5" in r.index else float(r.get("AR5", np.nan)))
-        summary_lines.append(f"| {rank} | {sym} | {sec} | {ups} | {drivers} | {state} |")
+        summary_lines.append(f"| {rank} | {sym} | {sec} | {ups} | {conviction} | {drivers} | {rationale} | {state} |")
 
     summary_lines.append("")
 
