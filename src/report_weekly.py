@@ -348,7 +348,10 @@ def build_report_markdown(
             risks.append("Normal idiosyncratic and market risk")
 
         summary_lines.append(f"### {sym} — {sec}")
-        summary_lines.append(f"- **UPS_adj:** {fmt_num(ups, 3)} | **Signal state:** {state}")
+        conv = conviction_band(ups)
+        rat = ranking_rationale(r)
+        summary_lines.append(f"- **UPS_adj:** {fmt_num(ups, 3)} | **Conviction:** {conv} | **Signal state:** {state}")
+        summary_lines.append(f"- Ranking rationale: {rat}")
         summary_lines.append(f"- Components: IFS {fmt_num(ifs)} · EVS {fmt_num(evs)} · MCS_up {fmt_num(mcs)}")
         summary_lines.append(f"- Market context: AR5 {fmt_pct(ar5)} · VS {fmt_num(vs)} · VR_pct {fmt_num(vr, 2)}")
         if event_tags:
