@@ -1,0 +1,56 @@
+name: Weekly Market Pressure Scan
+
+on:
+  schedule:
+    - cron: "5 21 * * 5"  # 4:05pm ET during Standard Time (EST, UTC-5) => 21:05 UTC
+  workflow_dispatch: {}
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run weekly pipeline
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python -m src.run_weekly_pipeline --week_end $(date -u +%F) --max_clusters_per_symbol 1 --skip_backtest
+          python -m src.update_weekly_pnl --week_end $(date -u +%F)
+          python -m src.scoreboard
+          python -m src.trader_sheet --week_end $(date -u +%F)
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trader-sheet-and-report
+          path: |
+            data/derived/trader_sheets/**
+            data/derived/reports/**
+            data/derived/baskets/**
+            data/live/scoreboard.csv
+
+      - name: Email links (or attachments)
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.sendgrid.net
+          server_port: 587
+          username: apikey
+          password: ${{ secrets.SENDGRID_API_KEY }}
+          subject: Weekly Market Pressure Trader Sheet
+          to: fred.ugast@uspv.co
+          from: market-pressure-scan@yourdomain.com
+          body: |
+            Your weekly run completed. Download artifacts from the GitHub Actions run.
