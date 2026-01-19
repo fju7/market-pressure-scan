@@ -45,49 +45,54 @@ def build_rep_text(row: pd.Series) -> str:
     s = (row.get("rep_summary", "") or "").strip()
     return (h + " || " + s).strip()
 
-SENT_SCHEMA = {
+COMBINED_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "sent_label": {"type": "string", "enum": ["Positive", "Neutral", "Negative", "Mixed/Unclear"]},
-        "sent_score": {"type": "number", "minimum": -1.0, "maximum": 1.0},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "sent_driver": {"type": "string", "enum": ["Fundamental","Capital structure","Operational","Governance","Market/Price-action","Speculation/Opinion"]},
-        "rationale": {"type": "string"}
-    },
-    "required": ["sent_label","sent_score","confidence","sent_driver","rationale"]
-}
-
-EVENT_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "event_type_primary": {
-            "type": "string",
-            "enum": [
-                "EARNINGS_GUIDANCE","MNA_STRATEGIC","REGULATORY_LEGAL","CAPITAL_STRUCTURE",
-                "OPERATIONS_SUPPLY","PRODUCT_MARKET","MANAGEMENT_GOVERNANCE","ANALYST_ACTION",
-                "MACRO_SECTOR","PRICE_ACTION_RECAP","OTHER_LOW_SIGNAL"
-            ]
+        "sentiment": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "sent_label": {"type": "string", "enum": ["Positive", "Neutral", "Negative", "Mixed/Unclear"]},
+                "sent_score": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "sent_driver": {"type": "string", "enum": ["Fundamental","Capital structure","Operational","Governance","Market/Price-action","Speculation/Opinion"]},
+                "rationale": {"type": "string"}
+            },
+            "required": ["sent_label","sent_score","confidence","sent_driver","rationale"]
         },
-        "event_severity": {"type": "integer", "minimum": 0, "maximum": 3},
-        "event_direction": {"type": "string", "enum": ["Positive","Negative","Mixed/Unclear","Neutral"]},
-        "event_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "rationale": {"type": "string"},
+        "event": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "event_type_primary": {
+                    "type": "string",
+                    "enum": [
+                        "EARNINGS_GUIDANCE","MNA_STRATEGIC","REGULATORY_LEGAL","CAPITAL_STRUCTURE",
+                        "OPERATIONS_SUPPLY","PRODUCT_MARKET","MANAGEMENT_GOVERNANCE","ANALYST_ACTION",
+                        "MACRO_SECTOR","PRICE_ACTION_RECAP","OTHER_LOW_SIGNAL"
+                    ]
+                },
+                "event_severity": {"type": "integer", "minimum": 0, "maximum": 3},
+                "event_direction": {"type": "string", "enum": ["Positive","Negative","Mixed/Unclear","Neutral"]},
+                "event_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "rationale": {"type": "string"}
+            },
+            "required": ["event_type_primary","event_severity","event_direction","event_confidence","rationale"]
+        }
     },
-    "required": ["event_type_primary","event_severity","event_direction","event_confidence","rationale"]
+    "required": ["sentiment","event"]
 }
-
-SENT_SYSTEM = (
-    "You are a financial news classifier. Score directional impact on company fundamentals, not stock price. "
-    "If the item is mostly price-move recap without new information, use sent_driver='Market/Price-action' and keep sent_score near 0. "
-    "Be conservative."
-)
-
-EVENT_SYSTEM = (
-    "You are a financial event classifier. Identify event type and severity. "
-    "If the item is mostly price movement without new info, event_type_primary='PRICE_ACTION_RECAP' with low severity (0-1). "
-    "Be conservative."
+COMBINED_SYSTEM = (
+    "You are a conservative financial news classifier for a weekly research pipeline.\n"
+    "Task: produce BOTH a sentiment assessment (directional impact on fundamentals, not stock price) "
+    "and an event classification (type/severity/direction).\n"
+    "Rules:\n"
+    "- If the item is mostly a price-move recap with no new info: "
+    "sent_driver='Market/Price-action', sent_score near 0, and event_type_primary='PRICE_ACTION_RECAP' with severity 0-1.\n"
+    "- Be conservative: prefer Neutral/Mixed when unclear.\n"
+    "- Rationales must be one sentence each (max 25 words).\n"
+    "Return ONLY JSON matching the schema."
 )
 
 def resp_payload(model: str, system: str, user: str, schema_name: str, schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,24 +116,16 @@ def resp_payload(model: str, system: str, user: str, schema_name: str, schema: D
         }
     }
 
-def sentiment_user(symbol: str, published_utc: str, headline: str, summary: str) -> str:
+
+def combined_user(symbol: str, published_utc: str, headline: str, summary: str) -> str:
     return f"""Ticker: {symbol}
 Published (UTC): {published_utc}
 Headline: {headline}
 Summary: {summary}
 
 Return a single JSON object that matches the schema exactly.
-Keep rationale to one sentence (max 25 words).
-"""
-
-def event_user(symbol: str, published_utc: str, headline: str, summary: str) -> str:
-    return f"""Ticker: {symbol}
-Published (UTC): {published_utc}
-Headline: {headline}
-Summary: {summary}
-
-Return a single JSON object that matches the schema exactly.
-Keep rationale to one sentence (max 25 words).
+- sentiment.rationale: one sentence (max 25 words)
+- event.rationale: one sentence (max 25 words)
 """
 
 def embed_batch(client: OpenAIHTTP, texts: List[str], model: str) -> List[List[float]]:
@@ -157,6 +154,9 @@ def run(
     cls_model: str = "gpt-4o-mini",
     emb_batch_size: int = 128,
     sleep_s: float = 0.0,
+    limit: int | None = None,
+    jaccard_threshold: float = 0.55,
+    max_clusters_per_symbol: int = 2,
 ) -> Path:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
@@ -167,7 +167,10 @@ def run(
         raise FileNotFoundError(f"Missing clusters file: {clusters_parquet}")
 
     df = pd.read_parquet(clusters_parquet).copy()
-    df = df.head(5).copy()
+    print(f"[INFO] loaded clusters: {len(df):,}")
+    if limit is not None:
+        df = df.head(limit).copy()
+    print(f"[INFO] clusters to process: {len(df):,}")
     for col in ["symbol","cluster_id","rep_published_utc","rep_headline","rep_summary"]:
         if col not in df.columns:
             raise RuntimeError(f"clusters.parquet missing required column: {col}")
@@ -196,23 +199,19 @@ def run(
         head = str(r.get("rep_headline", "") or "")
         summ = str(r.get("rep_summary", "") or "")
 
-        sp = resp_payload(
+        payload = resp_payload(
             model=cls_model,
-            system=SENT_SYSTEM,
-            user=sentiment_user(sym, pub, head, summ),
-            schema_name="sentiment_schema",
-            schema=SENT_SCHEMA
-        )
-        ep = resp_payload(
-            model=cls_model,
-            system=EVENT_SYSTEM,
-            user=event_user(sym, pub, head, summ),
-            schema_name="event_schema",
-            schema=EVENT_SCHEMA
+            system=COMBINED_SYSTEM,
+            user=combined_user(sym, pub, head, summ),
+            schema_name="sentiment_event_schema",
+            schema=COMBINED_SCHEMA,
         )
 
-        s = classify_one(client, sp)
-        e = classify_one(client, ep)
+        both = classify_one(client, payload)
+
+        # Defensive: ensure expected keys exist
+        s = both.get("sentiment", {}) if isinstance(both, dict) else {}
+        e = both.get("event", {}) if isinstance(both, dict) else {}
 
         sent_jsons.append(json.dumps(s))
         event_jsons.append(json.dumps(e))
@@ -246,6 +245,8 @@ if __name__ == "__main__":
     ap.add_argument("--cls_model", default="gpt-4o-mini")
     ap.add_argument("--emb_batch_size", type=int, default=128)
     ap.add_argument("--sleep_s", type=float, default=0.0)
+    ap.add_argument("--limit", type=int, default=None, help="Limit number of clusters for testing")
+    ap.add_argument("--max_clusters_per_symbol", type=int, default=2)
     args = ap.parse_args()
 
     clusters = args.clusters or f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
@@ -259,4 +260,5 @@ if __name__ == "__main__":
         cls_model=args.cls_model,
         emb_batch_size=args.emb_batch_size,
         sleep_s=args.sleep_s,
+        limit=args.limit,
     )
