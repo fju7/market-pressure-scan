@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from . import config
+
 
 # ----------------------------
 # Paths
@@ -447,6 +449,7 @@ def build_report_markdown(
         "avg_novelty_z": float(avg_novelty) if np.isfinite(avg_novelty) else None,
         "avg_event_intensity_z": float(avg_evs) if np.isfinite(avg_evs) else None,
         "cluster_count": int(len(enriched)),
+        "config_snapshot": config.get_config_snapshot(),  # Lock experiment protocol
     }
 
     return "\n".join(summary_lines), meta

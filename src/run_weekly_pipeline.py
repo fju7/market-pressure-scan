@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import config
+
 
 def sh(cmd):
     print("\n▶ Running:", " ".join(cmd))
@@ -13,9 +15,21 @@ def main():
     ap = argparse.ArgumentParser("Run full weekly market pressure pipeline")
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
     ap.add_argument("--universe", default="sp500_universe.csv")
-    ap.add_argument("--max_clusters_per_symbol", type=int, default=1)
+    ap.add_argument("--max_clusters_per_symbol", type=int, default=None, 
+                    help="Max clusters per symbol (default: from CONFIG.yaml)")
     ap.add_argument("--skip_backtest", action="store_true")
     args = ap.parse_args()
+
+    # Validate config
+    config.validate_config()
+    
+    # Use config defaults if not specified
+    max_clusters = args.max_clusters_per_symbol if args.max_clusters_per_symbol is not None else config.get_max_clusters_per_symbol()
+    
+    print(f"\n🔒 Experiment: {config.get_experiment_name()} v{config.get_experiment_version()}")
+    print(f"   Max clusters/symbol: {max_clusters}")
+    print(f"   Basket size: {config.get_basket_size()}")
+    print(f"   Skip rules: {'ENABLED' if config.get_skip_rules_enabled() else 'DISABLED'}\n")
 
     py = sys.executable
 
@@ -37,7 +51,7 @@ def main():
     sh([
         py, "-m", "src.cluster_news",
         "--week_end", args.week_end,
-        "--max_clusters_per_symbol", str(args.max_clusters_per_symbol)
+        "--max_clusters_per_symbol", str(max_clusters)
     ])
 
     # 4) Enrich clusters (OpenAI)
@@ -63,8 +77,8 @@ def main():
     sh([
         py, "-m", "src.export_basket",
         "--week_end", args.week_end,
-        "--top_n", "20",
         "--skip_low_info"
+        # top_n now comes from CONFIG.yaml
     ])
 
     # 8) Trader sheet

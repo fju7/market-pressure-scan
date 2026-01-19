@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from . import config
+
 
 def run(week_end: str, top_n: int, skip_low_info: bool, equal_weight: bool = True) -> Path:
     meta_path = Path(f"data/derived/reports/week_ending={week_end}/report_meta.json")
@@ -75,8 +77,11 @@ def run(week_end: str, top_n: int, skip_low_info: bool, equal_weight: bool = Tru
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--week_end", required=True)
-    ap.add_argument("--top_n", type=int, default=20)
+    ap.add_argument("--top_n", type=int, default=None, help="Basket size (default: from CONFIG.yaml)")
     ap.add_argument("--skip_low_info", action="store_true")
     args = ap.parse_args()
 
-    run(args.week_end, top_n=args.top_n, skip_low_info=args.skip_low_info)
+    # Use config default if not specified
+    top_n = args.top_n if args.top_n is not None else config.get_basket_size()
+    
+    run(args.week_end, top_n=top_n, skip_low_info=args.skip_low_info)

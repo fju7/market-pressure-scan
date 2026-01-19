@@ -1,0 +1,82 @@
+# Market Pressure Scan - Experiment Configuration
+# LOCKED FOR 8-12 WEEK TESTING PERIOD
+# Do not modify during live testing - any changes represent a new experiment
+
+experiment:
+  name: "news-novelty-v1"
+  start_date: "2026-01-16"  # First week of testing
+  description: "Testing if novelty-based event filtering provides edge over SPY"
+  version: "1.0.0"
+
+# Data sources
+data_sources:
+  market_data: "Finnhub API"
+  news_feed: "Finnhub Company News API"
+  embeddings: "OpenAI text-embedding-3-small"
+  universe: "sp500_universe.csv"
+  
+# News clustering
+clustering:
+  max_clusters_per_symbol: 1  # One dominant cluster per symbol per week
+  embedding_model: "text-embedding-3-small"
+  min_cluster_size: 1
+  
+# Signal generation
+signals:
+  # Low-information week detection
+  recap_pct_threshold: 0.50  # Skip if >50% of clusters are PRICE_ACTION_RECAP
+  min_clusters_threshold: 10  # Skip if fewer than 10 total clusters
+  min_avg_novelty_z: -0.5  # Skip if avg novelty z-score < -0.5
+  
+  # Event filtering
+  neutralize_price_action_recap: true  # Zero out PRICE_ACTION_RECAP sentiment/severity
+  exclude_spy_from_ranking: true  # Don't rank SPY itself
+  
+# Basket construction
+basket:
+  size: 20  # Top N UPS signals
+  weighting_method: "equal_weight"  # Equal weight across all positions
+  sector_cap: null  # No sector concentration limit (yet)
+  min_conviction: null  # No conviction threshold (yet)
+  
+# Skip-week logic
+skip_rules:
+  enabled: true
+  conditions:
+    - "recap_pct > 0.50"  # More than 50% PRICE_ACTION_RECAP
+    - "num_clusters < 10"  # Fewer than 10 clusters
+    - "avg_novelty_z < -0.5 AND avg_event_intensity_z < -0.5"  # Both signals weak
+  
+# Execution timing
+execution:
+  entry_timing: "Monday open"  # Use Monday open price
+  exit_timing: "Friday close"  # Use Friday close price
+  entry_offset_days: 3  # Monday is 3 days after Friday week-end
+  exit_offset_days: 0  # Friday close is week-end date
+  
+# Risk management
+risk:
+  max_position_size: 0.05  # 5% max per position (equal weight = 20 positions = 5% each)
+  cash_reserve: 0.0  # 0% cash reserve (fully invested when TRADE)
+  rebalance_frequency: "weekly"  # New basket every week
+  
+# Performance measurement
+performance:
+  benchmark: "SPY"
+  min_weeks_for_analysis: 8  # Need 8 weeks minimum for meaningful analysis
+  target_weeks: 12  # Target 12 weeks for initial test
+  
+# What we're NOT doing (to avoid drift)
+constraints:
+  no_parameter_tuning: true  # Do not adjust parameters based on recent performance
+  no_position_sizing_optimization: true  # Keep equal weight
+  no_sector_rotation: true  # No tactical sector tilts
+  no_timing_adjustments: true  # Always Mon open → Fri close
+  no_cherry_picking: true  # Take all TRADE signals, skip all SKIP signals
+  
+# Success criteria (after 12 weeks)
+success_criteria:
+  min_active_return: 0.0  # Beat SPY (any positive active return)
+  min_hit_rate: 0.50  # 50% of TRADE weeks positive
+  min_information_ratio: 0.5  # IR > 0.5
+  max_acceptable_skip_rate: 0.60  # Don't skip more than 60% of weeks
