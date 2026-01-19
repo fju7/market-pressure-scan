@@ -51,6 +51,6 @@ jobs:
           password: ${{ secrets.SENDGRID_API_KEY }}
           subject: Weekly Market Pressure Trader Sheet
           to: fred.ugast@uspv.co
-          from: market-pressure-scan@yourdomain.com
+          from: fred.ugast@uspv.co
           body: |
             Your weekly run completed. Download artifacts from the GitHub Actions run.
