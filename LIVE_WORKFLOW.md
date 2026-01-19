@@ -74,8 +74,49 @@ This will:
 2. ✅ For SKIP weeks: Log SKIP row with zeros and skip reason
 3. ✅ Calculate SPY benchmark returns
 4. ✅ Log to `weekly_pnl.csv`
+5. ✅ Generate performance scoreboard (instant trajectory view)
 
 **No manual input needed** - all prices pulled from `candles_daily.parquet`
+
+**Quick scoreboard view:**
+```bash
+cat data/live/scoreboard.csv
+cat data/derived/scoreboards/latest_scoreboard.md
+```
+
+---
+
+## Quick Performance Check
+
+**10-second trajectory view:**
+```bash
+python -m src.scoreboard
+```
+
+Shows:
+- Total weeks (TRADE/SKIP split)
+- Cumulative returns (basket vs SPY)
+- Hit rate and max drawdown
+- Time in market %
+
+**Example output:**
+```
+📊 PERFORMANCE SCOREBOARD
+══════════════════════════════════════════════════════════════════════
+
+📅 Weeks: 5 total (3 TRADE, 2 SKIP)
+⏱️  Time in Market: 60.0%
+
+💰 Returns:
+   Basket:    +2.91%
+   SPY:       +3.21%
+   Active:    -0.30%
+
+📈 Performance:
+   Hit Rate:        66.7%
+   Avg Active/Week: +0.32%
+   Max Drawdown:    -0.60%
+```
 
 ---
 
@@ -117,6 +158,7 @@ python -m src.log_trades \
 ### Friday Close
 ```bash
 python -m src.update_weekly_pnl --week_end YYYY-MM-DD
+python -m src.scoreboard  # Optional: regenerate scoreboard
 ```
 
 ## Data Files
@@ -127,9 +169,11 @@ python -m src.update_weekly_pnl --week_end YYYY-MM-DD
 - `candles_daily.parquet` - Price data
 
 ### Output (ledgers)
-- `trades_log.csv` - All executed trades
-- `weekly_pnl.csv` - Position-level returns
+- `trades_log.csv` - All executed trades (optional, for real fills)
+- `weekly_pnl.csv` - Position-level returns (auto-calculated)
 - `weeks_log.csv` - All week decisions + quality metrics
+- `scoreboard.csv` - Single-row performance summary
+- `latest_scoreboard.md` - Formatted performance report
 
 ## Key Principles
 

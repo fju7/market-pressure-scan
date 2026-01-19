@@ -178,12 +178,20 @@ ANYTIME - Performance Analysis:
             "Auto-calculating weekly P&L from candles"
         )
         
+        # Generate scoreboard
+        run_command(
+            [py, "-m", "src.scoreboard"],
+            "Generating performance scoreboard"
+        )
+        
         print("\n" + "="*70)
         print("✅ FRIDAY CLOSE workflow complete!")
         print("="*70)
         print("\n📋 Week complete! View results:")
         print("   cat data/live/weekly_pnl.csv")
-        print("\n📊 Run performance analysis anytime:")
+        print("   cat data/live/scoreboard.csv")
+        print("   cat data/derived/scoreboards/latest_scoreboard.md")
+        print("\n📊 Deep analysis anytime:")
         print("   python -m src.analyze_performance\n")
 
 
