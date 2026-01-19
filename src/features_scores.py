@@ -1,0 +1,680 @@
+# src/features_scores.py
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+from dateutil import tz
+
+# ----------------------------
+# Config / paths
+# ----------------------------
+
+NY = tz.gettz("America/New_York")
+
+@dataclass(frozen=True)
+class Paths:
+    root: Path
+    derived: Path
+    news_clusters_dir: Path
+    rep_enriched_dir: Path
+    market_daily_path: Path
+    out_features_dir: Path
+    out_scores_dir: Path
+
+def default_paths() -> Paths:
+    root = Path(__file__).resolve().parents[1]
+    derived = root / "data" / "derived"
+    return Paths(
+        root=root,
+        derived=derived,
+        news_clusters_dir=derived / "news_clusters",
+        rep_enriched_dir=derived / "rep_enriched",
+        market_daily_path=derived / "market_daily" / "candles_daily.parquet",
+        out_features_dir=derived / "features_weekly",
+        out_scores_dir=derived / "scores_weekly",
+    )
+
+# ----------------------------
+# Utilities
+# ----------------------------
+
+def parse_week_end(s: str) -> datetime:
+    # expects YYYY-MM-DD (ET date representing the Friday)
+    dt = datetime.fromisoformat(s)
+    return datetime(dt.year, dt.month, dt.day, 0, 0, 0)
+
+def week_end_cutoff_utc(week_end_et: datetime) -> datetime:
+    # Friday 4pm ET cutoff
+    dt_et = datetime(week_end_et.year, week_end_et.month, week_end_et.day, 16, 0, 0, tzinfo=NY)
+    return dt_et.astimezone(timezone.utc)
+
+def winsorize(x: np.ndarray, zcap: float = 3.0) -> np.ndarray:
+    return np.clip(x, -zcap, zcap)
+
+def zscore_series(s: pd.Series, zcap: float = 3.0) -> pd.Series:
+    vals = s.astype(float).to_numpy()
+    mu = np.nanmean(vals)
+    sd = np.nanstd(vals)
+    if not np.isfinite(sd) or sd == 0:
+        return pd.Series(np.zeros(len(s), dtype=float), index=s.index)
+    z = (vals - mu) / sd
+    z = winsorize(z, zcap=zcap)
+    return pd.Series(z, index=s.index)
+
+def cosine_sim_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    # a: (m,d), b: (n,d)
+    # returns (m,n)
+    a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-12)
+    b_norm = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-12)
+    return a_norm @ b_norm.T
+
+def safe_json_load(x) -> dict:
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, str):
+        x = x.strip()
+        if not x:
+            return {}
+        return json.loads(x)
+    return {}
+
+# ----------------------------
+# Loaders
+# ----------------------------
+
+def load_universe(universe_csv: Path) -> pd.DataFrame:
+    df = pd.read_csv(universe_csv)
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+    if "sector" not in df.columns:
+        df["sector"] = "Unknown"
+    return df[["symbol", "sector"]].drop_duplicates()
+
+def load_week_parquet(base_dir: Path, week_end: str, filename: str) -> pd.DataFrame:
+    p = base_dir / f"week_ending={week_end}" / filename
+    if not p.exists():
+        raise FileNotFoundError(f"Missing required file: {p}")
+    return pd.read_parquet(p)
+
+def list_prior_weeks(week_end_et: datetime, n_weeks: int) -> List[str]:
+    # includes current week_end as week 0
+    out = []
+    for k in range(n_weeks):
+        d = week_end_et - timedelta(days=7 * k)
+        out.append(d.date().isoformat())
+    return out
+
+# ----------------------------
+# Market features (AR5, VS, VR)
+# ----------------------------
+
+def market_features_for_week(
+    candles_daily: pd.DataFrame,
+    universe_syms: List[str],
+    week_end: str,
+) -> pd.DataFrame:
+    """
+    candles_daily columns: symbol, date (YYYY-MM-DD), o, h, l, c, v
+    Must include SPY.
+    Computes as-of week_end (or nearest prior trading day):
+      - AR5: 5-day close/close return relative to SPY
+      - VS: log( avgVol_5 / avgVol_60 )
+      - VR: 60d realized vol percentile across universe
+    """
+    cd = candles_daily.copy()
+    cd["date"] = pd.to_datetime(cd["date"]).dt.date
+    target = datetime.fromisoformat(week_end).date()
+
+    # Restrict to universe + SPY
+    syms = set(universe_syms) | {"SPY"}
+    cd = cd[cd["symbol"].isin(syms)]
+
+    # For each symbol, find last available date <= target
+    # We'll compute returns ending at that date.
+    last_dates_list = []
+    for sym, g in cd.groupby("symbol"):
+        d = g.loc[g["date"] <= target, "date"]
+        if not d.empty:
+            last_dates_list.append({"symbol": sym, "asof_date": d.max()})
+    
+    last_dates = pd.DataFrame(last_dates_list)
+    if last_dates.empty:
+        raise RuntimeError("No trading data found for universe symbols.")
+
+    # Build a map for SPY asof_date (use SPY's last date)
+    spy_asof = last_dates.loc[last_dates["symbol"] == "SPY", "asof_date"]
+    if spy_asof.empty:
+        raise RuntimeError("SPY not found in candles_daily.parquet (required for AR5 baseline).")
+    spy_asof_date = spy_asof.iloc[0]
+
+    # Use SPY as-of date as the portfolio as-of date; for other symbols we still use their last<=target,
+    # but AR5 baseline will use SPY's 5d return ending spy_asof_date.
+    # If a symbol's last date differs (rare in S&P), it will be slightly misaligned; acceptable v1.
+
+    # Helper to compute 5d close-to-close return ending at asof_date
+    def ret_close(g: pd.DataFrame, end_date: datetime.date, lookback: int) -> Optional[float]:
+        gg = g[g["date"] <= end_date].sort_values("date")
+        if len(gg) < lookback + 1:
+            return None
+        c_end = float(gg["c"].iloc[-1])
+        c_start = float(gg["c"].iloc[-(lookback + 1)])
+        if c_start <= 0:
+            return None
+        return c_end / c_start - 1.0
+
+    # Helper avg volume
+    def avg_vol(g: pd.DataFrame, end_date: datetime.date, lookback: int) -> Optional[float]:
+        gg = g[g["date"] <= end_date].sort_values("date")
+        if len(gg) < lookback:
+            return None
+        return float(np.nanmean(gg["v"].iloc[-lookback:].astype(float).to_numpy()))
+
+    # Helper vol (std of daily close returns) over lookback
+    def realized_vol(g: pd.DataFrame, end_date: datetime.date, lookback: int) -> Optional[float]:
+        gg = g[g["date"] <= end_date].sort_values("date")
+        if len(gg) < lookback + 1:
+            return None
+        c = gg["c"].astype(float).to_numpy()
+        rets = np.diff(c[-(lookback + 1):]) / (c[-(lookback + 1):-1] + 1e-12)
+        if rets.size < 2:
+            return None
+        return float(np.nanstd(rets, ddof=1))
+
+    # Precompute SPY AR5
+    spy_g = cd[cd["symbol"] == "SPY"]
+    spy_ret5 = ret_close(spy_g, spy_asof_date, lookback=5)
+    if spy_ret5 is None:
+        raise RuntimeError("Not enough SPY history to compute AR5.")
+
+    rows = []
+    for sym in universe_syms:
+        g = cd[cd["symbol"] == sym]
+        if g.empty:
+            continue
+        asof_date = last_dates.loc[last_dates["symbol"] == sym, "asof_date"]
+        if asof_date.empty:
+            continue
+        asof_date = asof_date.iloc[0]
+
+        r5 = ret_close(g, asof_date, lookback=5)
+        v5 = avg_vol(g, asof_date, lookback=5)
+        v60 = avg_vol(g, asof_date, lookback=60)
+        rv60 = realized_vol(g, asof_date, lookback=60)
+
+        if r5 is None or v5 is None or v60 is None or rv60 is None or v60 <= 0:
+            continue
+
+        ar5 = float(r5 - spy_ret5)
+        vs = float(math.log(v5 / v60))
+        rows.append((sym, str(asof_date), ar5, vs, rv60))
+
+    mkt = pd.DataFrame(rows, columns=["symbol", "asof_date", "AR5", "VS_raw", "RV60"])
+    if mkt.empty:
+        raise RuntimeError("Market feature table is empty; check candles_daily data.")
+
+    # Vol regime percentile across universe
+    mkt["VR_pct"] = mkt["RV60"].rank(pct=True)
+
+    # Z-scores used later
+    mkt["z_AR5"] = zscore_series(mkt["AR5"])
+    mkt["z_VS"] = zscore_series(mkt["VS_raw"])
+    # We keep RV60 raw + VR_pct; VR penalty uses pct.
+
+    return mkt
+
+# ----------------------------
+# News-derived features (NV, NA, NS, SS, EI)
+# ----------------------------
+
+def compute_rep_sent_score_final(sent: dict) -> Tuple[float, float, str]:
+    """
+    Applies v1 penalties + confidence shrinkage.
+    Returns (sent_score_final, confidence_adj, driver)
+    """
+    score = float(sent.get("sent_score", 0.0) or 0.0)
+    conf = float(sent.get("confidence", 0.0) or 0.0)
+    driver = str(sent.get("sent_driver", ""))
+    if driver == "Market/Price-action":
+        score *= 0.35
+        conf *= 0.70
+    elif driver == "Speculation/Opinion":
+        score *= 0.65
+        conf *= 0.85
+    # confidence shrinkage
+    score_final = score * conf
+    return float(score_final), float(conf), driver
+
+def compute_event_sev_final(evt: dict, unique_sources: float = 1.0) -> float:
+    sev = float(evt.get("event_severity", 0.0) or 0.0)
+    conf = float(evt.get("event_confidence", 0.0) or 0.0)
+    etype = str(evt.get("event_type_primary", ""))
+    sev_adj = sev * conf
+
+    if etype == "PRICE_ACTION_RECAP":
+        sev_adj = min(sev_adj, 0.5)
+    if etype == "MACRO_SECTOR":
+        sev_adj *= 0.8
+
+    # light echo weight, capped
+    w_echo = 1.0 + 0.10 * math.log(1.0 + max(unique_sources, 0.0))
+    w_echo = min(w_echo, 1.3)
+    return float(sev_adj * w_echo)
+
+def build_news_feature_panel(
+    paths: Paths,
+    universe: pd.DataFrame,
+    week_end_et: datetime,
+    week_end: str,
+    lookback_weeks: int = 12,
+    novelty_min_history: int = 15,
+) -> pd.DataFrame:
+    """
+    Loads clusters + rep_enriched for current and prior weeks, builds weekly per-ticker:
+      - count_5d_dedup (weekly proxy)
+      - NV_raw, NA_raw (weekly proxies)
+      - NS_raw (embedding novelty)
+      - sent_5d, sent_60d, SS_raw
+      - EI_raw (event intensity)
+      - echo metrics
+    """
+    weeks = list_prior_weeks(week_end_et, n_weeks=lookback_weeks)
+    # Load clusters and rep_enriched for available weeks
+    cluster_frames = []
+    enrich_frames = []
+    available_weeks = []
+
+    for w in weeks:
+        cpath = paths.news_clusters_dir / f"week_ending={w}" / "clusters.parquet"
+        epath = paths.rep_enriched_dir / f"week_ending={w}" / "rep_enriched.parquet"
+        if cpath.exists() and epath.exists():
+            cdf = pd.read_parquet(cpath)
+            edf = pd.read_parquet(epath)
+            cdf["week_ending_date"] = w
+            edf["week_ending_date"] = w
+            cluster_frames.append(cdf)
+            enrich_frames.append(edf)
+            available_weeks.append(w)
+
+    if week_end not in available_weeks:
+        raise RuntimeError(f"Missing clusters/enriched data for target week_end={week_end}.")
+
+    clusters = pd.concat(cluster_frames, ignore_index=True)
+    enrich = pd.concat(enrich_frames, ignore_index=True)
+
+    # Ensure keys exist
+    # Expected in clusters: symbol, cluster_id, rep_published_utc, rep_headline, rep_summary, cluster_size, unique_sources
+    for col in ["symbol", "cluster_id"]:
+        if col not in clusters.columns:
+            raise RuntimeError(f"clusters.parquet missing required column: {col}")
+
+    for col in ["symbol", "cluster_id", "embedding", "sentiment_json", "event_json"]:
+        if col not in enrich.columns:
+            raise RuntimeError(f"rep_enriched.parquet missing required column: {col}")
+
+    # Restrict to universe symbols
+    uni_syms = set(universe["symbol"].tolist())
+    clusters = clusters[clusters["symbol"].isin(uni_syms)].copy()
+    enrich = enrich[enrich["symbol"].isin(uni_syms)].copy()
+
+    # Merge enrich onto clusters (rep fields + echo metrics live in clusters)
+    df = clusters.merge(
+        enrich[["week_ending_date", "symbol", "cluster_id", "embedding", "sentiment_json", "event_json"]],
+        on=["week_ending_date", "symbol", "cluster_id"],
+        how="left",
+        validate="one_to_one",
+    )
+
+    # Parse rep-level sentiment/event
+    df["sentiment"] = df["sentiment_json"].apply(safe_json_load)
+    df["event"] = df["event_json"].apply(safe_json_load)
+
+    # Some clusters may have missing enrich; drop those from NS/SS/EI but keep counts
+    df["has_embedding"] = df["embedding"].notna()
+    df["has_sent"] = df["sentiment_json"].notna()
+    df["has_evt"] = df["event_json"].notna()
+
+    # Compute per-rep sentiment final score
+    sent_out = df["sentiment"].apply(compute_rep_sent_score_final)
+    df["sent_score_final"] = [t[0] for t in sent_out]
+    df["sent_conf_adj"] = [t[1] for t in sent_out]
+    df["sent_driver"] = [t[2] for t in sent_out]
+
+    # Compute per-rep event severity final
+    if "unique_sources" not in df.columns:
+        df["unique_sources"] = 1.0
+    df["sev_final"] = df.apply(lambda r: compute_event_sev_final(r["event"], unique_sources=float(r["unique_sources"])), axis=1)
+
+    # Echo features
+    if "cluster_size" not in df.columns:
+        df["cluster_size"] = 1.0
+    df["EC_raw_cluster"] = df["cluster_size"].astype(float)
+
+    # --- Counts for NV/NA (weekly proxy) ---
+    # Use deduped story clusters per week as count_5d proxy.
+    weekly_counts = (
+        df.groupby(["week_ending_date", "symbol"], as_index=False)
+          .agg(total_clusters=("cluster_id", "nunique"),
+               total_raw_echo=("cluster_size", "sum"),
+               EC_raw=("EC_raw_cluster", "mean"),
+               unique_sources_mean=("unique_sources", "mean"))
+    )
+
+    # Build rolling sums over weeks for each symbol
+    # Create week index ordering by date
+    weekly_counts["week_dt"] = pd.to_datetime(weekly_counts["week_ending_date"])
+    weekly_counts = weekly_counts.sort_values(["symbol", "week_dt"])
+
+    # Rolling windows in weeks:
+    # 5d ~ 1 week, 20d ~ 4 weeks, 60d ~ 12 weeks
+    def add_roll(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("week_dt").copy()
+        g["count_5d_dedup"] = g["total_clusters"]
+        g["count_20d_dedup"] = g["total_clusters"].rolling(window=4, min_periods=1).sum()
+        g["count_60d_dedup"] = g["total_clusters"].rolling(window=12, min_periods=1).sum()
+        return g
+
+    weekly_counts = weekly_counts.groupby("symbol", group_keys=False).apply(add_roll)
+
+    # Extract current week rows
+    cur_counts = weekly_counts[weekly_counts["week_ending_date"] == week_end].copy()
+
+    # NV_raw and NA_raw (as previously specified with scaling)
+    cur_counts["NV_raw"] = np.log1p(cur_counts["count_5d_dedup"]) - np.log1p(cur_counts["count_60d_dedup"] / 12.0)
+    cur_counts["NA_raw"] = np.log1p(cur_counts["count_5d_dedup"]) - np.log1p(cur_counts["count_20d_dedup"] / 4.0)
+
+    # --- Novelty (NS) ---
+    # Current week embeddings per symbol, compare to historical embeddings prior weeks (exclude current week)
+    # We compute NS_raw = 0.7*median(1 - topKmedian(sim)) + 0.3*p75(...)
+    df["week_dt"] = pd.to_datetime(df["week_ending_date"])
+    cur_df = df[df["week_ending_date"] == week_end].copy()
+    hist_df = df[df["week_ending_date"] != week_end].copy()
+
+    # Prepare embedding arrays
+    # embeddings stored as list[float] in parquet -> object; convert to np arrays
+    def to_vec(x) -> Optional[np.ndarray]:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return None
+        if isinstance(x, (list, tuple, np.ndarray)):
+            return np.array(x, dtype=np.float32)
+        return None
+
+    cur_df["emb_vec"] = cur_df["embedding"].apply(to_vec)
+    hist_df["emb_vec"] = hist_df["embedding"].apply(to_vec)
+
+    # Keep only 12-week lookback history (already loaded), and exclude missing vectors
+    cur_df = cur_df[cur_df["emb_vec"].notna()].copy()
+    hist_df = hist_df[hist_df["emb_vec"].notna()].copy()
+
+    ns_rows = []
+    for sym in universe["symbol"].tolist():
+        cur_sym = cur_df[cur_df["symbol"] == sym]
+        if cur_sym.empty:
+            ns_rows.append((sym, np.nan, 0, 0))
+            continue
+        hist_sym = hist_df[hist_df["symbol"] == sym]
+        # history count
+        hcount = len(hist_sym)
+        if hcount == 0:
+            ns_rows.append((sym, np.nan, 0, 0))
+            continue
+
+        cur_mat = np.vstack(cur_sym["emb_vec"].to_list())
+        hist_mat = np.vstack(hist_sym["emb_vec"].to_list())
+
+        sims = cosine_sim_matrix(cur_mat, hist_mat)  # (m,n)
+        # novelty per current rep: 1 - median(topK similarities)
+        novs = []
+        topk = min(10, hist_mat.shape[0])
+        for i in range(sims.shape[0]):
+            row = sims[i]
+            # top-k median
+            idx = np.argpartition(-row, kth=topk - 1)[:topk]
+            top_vals = row[idx]
+            sim_topk_median = float(np.median(top_vals))
+            nov = 1.0 - sim_topk_median
+            novs.append(nov)
+
+        novs = np.array(novs, dtype=float)
+        ns_med = float(np.median(novs))
+        ns_p75 = float(np.percentile(novs, 75))
+        ns_raw = 0.7 * ns_med + 0.3 * ns_p75
+
+        ns_rows.append((sym, ns_raw, hcount, len(cur_sym)))
+
+    ns = pd.DataFrame(ns_rows, columns=["symbol", "NS_raw", "nov_hist_count", "nov_cur_reps"])
+
+    # Cold start shrinkage
+    # If history < novelty_min_history, blend toward cross-sectional median
+    median_ns = float(np.nanmedian(ns["NS_raw"].to_numpy()))
+    def shrink(row):
+        val = row["NS_raw"]
+        h = int(row["nov_hist_count"])
+        if not np.isfinite(val):
+            return median_ns
+        if h >= novelty_min_history:
+            return float(val)
+        w = max(0.0, min(1.0, h / float(novelty_min_history)))
+        return float(w * val + (1.0 - w) * median_ns)
+
+    ns["NS_raw_shrunk"] = ns.apply(shrink, axis=1)
+
+    # --- Sentiment shift (SS_raw) ---
+    # Weekly: sent_5d = weighted mean current week; baseline sent_60d = weighted mean prior 12 weeks excluding current.
+    # Weight: w = 1 + 0.15*log(1+echo_index) ; v1 proxy echo_index via cluster_size & unique_sources
+    # We'll compute w using cluster_size and unique_sources.
+    def rep_weight(r) -> float:
+        cs = float(r.get("cluster_size", 1.0) or 1.0)
+        us = float(r.get("unique_sources", 1.0) or 1.0)
+        echo_index = math.log(1 + cs) * math.log(1 + us)
+        return 1.0 + 0.15 * math.log(1.0 + echo_index)
+
+    df["w_rep"] = df.apply(lambda r: rep_weight(r), axis=1)
+
+    cur_sent = df[df["week_ending_date"] == week_end].copy()
+    hist_sent = df[df["week_ending_date"] != week_end].copy()
+
+    # Aggregate weighted sentiment
+    def wmean(x: np.ndarray, w: np.ndarray) -> float:
+        wsum = float(np.nansum(w))
+        if wsum <= 0:
+            return 0.0
+        return float(np.nansum(x * w) / wsum)
+
+    sent_rows = []
+    for sym in universe["symbol"].tolist():
+        c = cur_sent[cur_sent["symbol"] == sym]
+        h = hist_sent[hist_sent["symbol"] == sym]
+        sent_5d = wmean(c["sent_score_final"].to_numpy(dtype=float), c["w_rep"].to_numpy(dtype=float)) if not c.empty else 0.0
+        sent_60d = wmean(h["sent_score_final"].to_numpy(dtype=float), h["w_rep"].to_numpy(dtype=float)) if not h.empty else 0.0
+        ss_raw = sent_5d - sent_60d
+
+        price_action_rate = float(np.mean((c["sent_driver"] == "Market/Price-action").to_numpy())) if not c.empty else 0.0
+        mixed_rate = float(np.mean((c["sentiment"].apply(lambda d: d.get("sent_label")) == "Mixed/Unclear").to_numpy())) if not c.empty else 0.0
+        sent_intensity = float(wmean(np.abs(c["sent_score_final"].to_numpy(dtype=float)),
+                                     c["w_rep"].to_numpy(dtype=float))) if not c.empty else 0.0
+
+        sent_rows.append((sym, sent_5d, sent_60d, ss_raw, sent_intensity, mixed_rate, price_action_rate))
+
+    ss = pd.DataFrame(
+        sent_rows,
+        columns=["symbol", "sent_5d", "sent_60d", "SS_raw", "sent_intensity", "mixed_rate", "price_action_rate"],
+    )
+
+    # --- Event intensity (EI_raw) ---
+    # EI_raw = sum(min(sev_final,2.5)) over current week clusters
+    ei_rows = []
+    for sym in universe["symbol"].tolist():
+        c = cur_sent[cur_sent["symbol"] == sym]
+        if c.empty:
+            ei_rows.append((sym, 0.0, 0, 0.0))
+            continue
+        sev = c["sev_final"].astype(float).to_numpy()
+        ei_raw = float(np.sum(np.minimum(sev, 2.5)))
+        cnt2 = int(np.sum(sev >= 1.5))
+        ei_max = float(np.max(sev)) if sev.size else 0.0
+        ei_rows.append((sym, ei_raw, cnt2, ei_max))
+
+    ei = pd.DataFrame(ei_rows, columns=["symbol", "EI_raw", "EI_cnt_sev2plus", "EI_max"])
+
+    # Assemble per-symbol panel for current week
+    out = cur_counts.merge(ns[["symbol", "NS_raw_shrunk", "nov_hist_count", "nov_cur_reps"]], on="symbol", how="left")
+    out = out.merge(ss, on="symbol", how="left")
+    out = out.merge(ei, on="symbol", how="left")
+
+    # Rename NS field
+    out["NS_raw"] = out["NS_raw_shrunk"]
+    out.drop(columns=["NS_raw_shrunk"], inplace=True)
+
+    # Fill NaNs
+    for col in ["NV_raw", "NA_raw", "NS_raw", "SS_raw", "EI_raw", "EC_raw"]:
+        if col in out.columns:
+            out[col] = out[col].astype(float).fillna(0.0)
+
+    return out
+
+# ----------------------------
+# UPS scoring
+# ----------------------------
+
+def compute_scores(
+    panel: pd.DataFrame,
+    mkt: pd.DataFrame,
+    universe: pd.DataFrame,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    panel: per-symbol news features for current week (NV_raw, NA_raw, NS_raw, SS_raw, EI_raw etc)
+    mkt: per-symbol market features for asof week_end (AR5, VS_raw, VR_pct, z_AR5, z_VS)
+    Computes z-scored components and final UPS/DPS per v1, plus UPS_adj with vol penalty.
+    Returns (features_weekly, scores_weekly)
+    """
+    df = panel.merge(mkt[["symbol", "asof_date", "AR5", "VS_raw", "RV60", "VR_pct", "z_AR5", "z_VS"]], on="symbol", how="left")
+    df = df.merge(universe, on="symbol", how="left")
+
+    # z-score news raws cross-sectionally
+    df["NV"] = zscore_series(df["NV_raw"])
+    df["NA"] = zscore_series(df["NA_raw"])
+    df["NS"] = zscore_series(df["NS_raw"])
+    df["SS"] = zscore_series(df["SS_raw"])
+    df["EVS"] = zscore_series(df["EI_raw"])
+
+    # IFS
+    df["IFS"] = 0.25*df["NV"] + 0.20*df["NA"] + 0.30*df["NS"] + 0.25*df["SS"]
+
+    # Divergence terms (continuous)
+    # PD_up_raw = IFS - z(AR5) ; PD_down_raw = (-IFS) - z(-AR5)
+    df["z_neg_AR5"] = zscore_series(-df["AR5"].fillna(0.0))
+    df["PD_up_raw"] = df["IFS"] - df["z_AR5"].fillna(0.0)
+    df["PD_down_raw"] = (-df["IFS"]) - df["z_neg_AR5"].fillna(0.0)
+
+    df["z_PD_up"] = zscore_series(df["PD_up_raw"])
+    df["z_PD_down"] = zscore_series(df["PD_down_raw"])
+
+    # MCS
+    df["MCS_up"] = 0.45*df["z_AR5"].fillna(0.0) + 0.20*df["z_VS"].fillna(0.0) + 0.35*df["z_PD_up"]
+    df["MCS_down"] = 0.45*df["z_neg_AR5"].fillna(0.0) + 0.20*df["z_VS"].fillna(0.0) + 0.35*df["z_PD_down"]
+
+    # UPS/DPS raw
+    df["UPS_raw"] = 0.45*df["IFS"] + 0.20*df["EVS"] + 0.35*df["MCS_up"]
+    df["DPS_raw"] = 0.45*(-df["IFS"]) + 0.20*(-df["EVS"]) + 0.35*df["MCS_down"]
+
+    # Volatility penalty (v1): if VR_pct > 0.90, shrink to 85%
+    df["UPS_adj"] = np.where(df["VR_pct"].fillna(0.0) > 0.90, df["UPS_raw"] * 0.85, df["UPS_raw"])
+    df["DPS_adj"] = np.where(df["VR_pct"].fillna(0.0) > 0.90, df["DPS_raw"] * 0.85, df["DPS_raw"])
+
+    # Ranks
+    df["rank_UPS"] = df["UPS_adj"].rank(ascending=False, method="min").astype(int)
+    df["rank_DPS"] = df["DPS_adj"].rank(ascending=False, method="min").astype(int)
+
+    # Split into features vs scores outputs (so features stays reusable)
+    features_cols = [
+        "symbol","sector","asof_date",
+        "count_5d_dedup","count_20d_dedup","count_60d_dedup",
+        "NV_raw","NA_raw","NS_raw","SS_raw","EI_raw",
+        "EC_raw","unique_sources_mean","total_raw_echo",
+        "sent_5d","sent_60d","sent_intensity","mixed_rate","price_action_rate",
+        "EI_cnt_sev2plus","EI_max",
+        "AR5","VS_raw","RV60","VR_pct",
+        "nov_hist_count","nov_cur_reps",
+    ]
+    # Keep only those that exist
+    features_cols = [c for c in features_cols if c in df.columns]
+    features = df[features_cols].copy()
+
+    scores_cols = [
+        "symbol","sector","asof_date",
+        "NV","NA","NS","SS","EVS",
+        "IFS","PD_up_raw","PD_down_raw","MCS_up","MCS_down",
+        "UPS_raw","DPS_raw","UPS_adj","DPS_adj",
+        "rank_UPS","rank_DPS",
+        "VR_pct",
+    ]
+    scores = df[[c for c in scores_cols if c in df.columns]].copy()
+
+    return features, scores
+
+# ----------------------------
+# Main
+# ----------------------------
+
+def run(
+    universe_csv: Path,
+    week_end: str,
+    lookback_weeks: int = 12,
+):
+    paths = default_paths()
+    week_end_et = parse_week_end(week_end)
+
+    universe = load_universe(universe_csv)
+    universe_syms = universe["symbol"].tolist()
+
+    # Load market candles
+    if not paths.market_daily_path.exists():
+        raise FileNotFoundError(
+            f"Missing daily candles file: {paths.market_daily_path}\n"
+            "Expected columns: symbol,date,o,h,l,c,v and must include SPY."
+        )
+    candles_daily = pd.read_parquet(paths.market_daily_path)
+
+    mkt = market_features_for_week(candles_daily, universe_syms, week_end)
+
+    panel = build_news_feature_panel(
+        paths=paths,
+        universe=universe,
+        week_end_et=week_end_et,
+        week_end=week_end,
+        lookback_weeks=lookback_weeks,
+    )
+
+    features, scores = compute_scores(panel, mkt, universe)
+
+    # Write outputs
+    out_feat_dir = paths.out_features_dir / f"week_ending={week_end}"
+    out_score_dir = paths.out_scores_dir / f"week_ending={week_end}"
+    out_feat_dir.mkdir(parents=True, exist_ok=True)
+    out_score_dir.mkdir(parents=True, exist_ok=True)
+
+    feat_path = out_feat_dir / "features_weekly.parquet"
+    score_path = out_score_dir / "scores_weekly.parquet"
+    features.to_parquet(feat_path, index=False)
+    scores.to_parquet(score_path, index=False)
+
+    print(f"Wrote: {feat_path}")
+    print(f"Wrote: {score_path}")
+    print(f"Rows: features={len(features):,}, scores={len(scores):,}")
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--universe", required=True, help="Path to sp500_universe.csv")
+    p.add_argument("--week_end", required=True, help="Week ending Friday (ET) YYYY-MM-DD")
+    p.add_argument("--lookback_weeks", default=12, type=int, help="History window in weeks for NV/NA and baselines")
+    args = p.parse_args()
+
+    run(Path(args.universe), args.week_end, lookback_weeks=args.lookback_weeks)
