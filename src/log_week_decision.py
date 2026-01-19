@@ -44,10 +44,11 @@ def log_week_decision(week_end: str) -> str:
         meta = json.loads(meta_path.read_text())
     
     # Prepare log entry
+    # Use cluster_count from report_meta.json (single source of truth)
     log_entry = {
         "week_ending_date": week_end,
         "action": action,
-        "num_clusters": meta.get("num_clusters", 0),
+        "num_clusters": meta.get("cluster_count", 0),  # Changed from num_clusters
         "avg_novelty_z": meta.get("avg_novelty_z", 0.0),
         "avg_event_intensity_z": meta.get("avg_event_intensity_z", 0.0),
         "recap_pct": meta.get("recap_pct", 0.0),
