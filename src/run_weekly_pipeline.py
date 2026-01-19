@@ -73,7 +73,13 @@ def main():
         "--week_end", args.week_end
     ])
 
-    # 9) Backtest (optional, skipped for single week runs)
+    # 9) Log week decision
+    sh([
+        py, "-m", "src.log_week_decision",
+        "--week_end", args.week_end
+    ])
+
+    # 10) Backtest (optional, skipped for single week runs)
     # The backtest requires --from_week_end and --to_week_end for multi-week backtests
     # For single week pipeline runs, it doesn't make sense to run backtest
     if not args.skip_backtest:
