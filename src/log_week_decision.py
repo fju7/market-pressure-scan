@@ -37,6 +37,37 @@ def log_week_decision(week_end: str) -> str:
     basket = pd.read_csv(basket_path)
     action = basket["action"].iloc[0]
     
+    # Calculate turnover metrics by comparing with prior week
+    basket_size = len(basket) if action == "TRADE" else 0
+    overlap_pct = 0.0
+    turnover_pct = 0.0
+    
+    if action == "TRADE" and basket_size > 0:
+        # Find most recent prior TRADE week
+        log_path = Path("data/live/weeks_log.csv")
+        if log_path.exists():
+            weeks_log = pd.read_csv(log_path)
+            prior_trades = weeks_log[
+                (weeks_log["action"] == "TRADE") & 
+                (weeks_log["week_ending_date"] < week_end)
+            ]
+            
+            if not prior_trades.empty:
+                prior_week_end = prior_trades.iloc[-1]["week_ending_date"]
+                prior_basket_path = Path(f"data/derived/baskets/week_ending={prior_week_end}/basket.csv")
+                
+                if prior_basket_path.exists():
+                    prior_basket = pd.read_csv(prior_basket_path)
+                    
+                    # Get ticker lists (handle potential column name variations)
+                    current_tickers = set(basket["ticker"].values if "ticker" in basket.columns else basket.iloc[:, 0].values)
+                    prior_tickers = set(prior_basket["ticker"].values if "ticker" in prior_basket.columns else prior_basket.iloc[:, 0].values)
+                    
+                    # Calculate overlap and turnover
+                    overlap_count = len(current_tickers & prior_tickers)
+                    overlap_pct = (overlap_count / basket_size * 100) if basket_size > 0 else 0.0
+                    turnover_pct = ((basket_size - overlap_count) / basket_size * 100) if basket_size > 0 else 0.0
+    
     # Read report metadata
     meta_path = Path(f"data/derived/reports/week_ending={week_end}/report_meta.json")
     meta = {}
@@ -48,6 +79,9 @@ def log_week_decision(week_end: str) -> str:
     log_entry = {
         "week_ending_date": week_end,
         "action": action,
+        "basket_size": basket_size,
+        "overlap_pct": round(overlap_pct, 1),
+        "turnover_pct": round(turnover_pct, 1),
         "num_clusters": meta.get("cluster_count", 0),  # Changed from num_clusters
         "avg_novelty_z": meta.get("avg_novelty_z", 0.0),
         "avg_event_intensity_z": meta.get("avg_event_intensity_z", 0.0),
@@ -86,6 +120,7 @@ def log_week_decision(week_end: str) -> str:
     # Display summary
     print(f"\n📊 Week {week_end} summary:")
     print(f"   Action: {action}")
+    print(f"   Basket size: {log_entry['basket_size']}")
     print(f"   Clusters: {log_entry['num_clusters']}")
     print(f"   Recap %: {log_entry['recap_pct']:.0f}%")
     print(f"   Low info: {log_entry['is_low_info']}")
@@ -94,6 +129,8 @@ def log_week_decision(week_end: str) -> str:
         print(f"   ⏭️  Reason: {log_entry['skip_reason'][:80]}")
     else:
         print(f"   📈 Positions: {log_entry['num_positions']}")
+        if overlap_pct > 0:
+            print(f"   🔄 Overlap: {log_entry['overlap_pct']:.1f}% | Turnover: {log_entry['turnover_pct']:.1f}%")
     
     return action
 

@@ -50,6 +50,7 @@ jobs:
           python -m src.update_weekly_pnl --week_end ${{ steps.week_end.outputs.week_end }}
           python -m src.scoreboard
           python -m src.trader_sheet --week_end ${{ steps.week_end.outputs.week_end }}
+          python -m src.log_week_decision --week_end ${{ steps.week_end.outputs.week_end }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -85,6 +86,10 @@ jobs:
             // Read trader sheet for action + top symbols
             let actionDecision = 'UNKNOWN';
             let topSymbols = 'Not available';
+            let basketSize = 0;
+            let overlapPct = null;
+            let turnoverPct = null;
+            
             try {
               const traderSheet = fs.readFileSync(`data/derived/trader_sheets/week_ending=${week_end}/trader_sheet.csv`, 'utf8');
               const lines = traderSheet.split('\n');
@@ -93,7 +98,7 @@ jobs:
               const hasData = lines.length > 1 && lines[1].trim().length > 0;
               actionDecision = hasData ? '📈 TRADE' : '⏸️ SKIP';
               
-              // Get top 5 symbols
+              // Get top 5 symbols and count basket size
               if (hasData) {
                 const symbols = lines.slice(1, 6)
                   .filter(line => line.trim())
@@ -105,11 +110,29 @@ jobs:
                     return `${ticker} (UPS: ${ups}, ${conviction})`;
                   });
                 topSymbols = symbols.join('\n');
+                basketSize = lines.slice(1).filter(line => line.trim()).length;
               } else {
                 topSymbols = 'Low-information week: No trades';
               }
             } catch (e) {
               topSymbols = `Could not read trader sheet: ${e.message}`;
+            }
+            
+            // Read weeks_log for turnover metrics
+            try {
+              const weeksLog = fs.readFileSync('data/live/weeks_log.csv', 'utf8');
+              const lines = weeksLog.split('\n');
+              const currentWeekLine = lines.find(line => line.includes(week_end));
+              
+              if (currentWeekLine) {
+                const cols = currentWeekLine.split(',');
+                // Assuming CSV columns: week_ending_date,action,basket_size,overlap_pct,turnover_pct,...
+                basketSize = parseInt(cols[2]) || basketSize;
+                overlapPct = parseFloat(cols[3]);
+                turnoverPct = parseFloat(cols[4]);
+              }
+            } catch (e) {
+              // Weeks log might not exist yet or metric not available
             }
             
             const body = `@fju7 — Your weekly market pressure scan is ready!
@@ -118,6 +141,7 @@ jobs:
             
             **Week Ending:** ${week_end}
             **Status:** ${status === 'success' ? '✅ Success' : '❌ Failed'}
+            **Basket Size:** ${basketSize}${overlapPct !== null ? `\n**Overlap:** ${overlapPct.toFixed(1)}% | **Turnover:** ${turnoverPct.toFixed(1)}%` : ''}
             
             ### ${actionDecision}
             
