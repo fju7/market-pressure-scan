@@ -67,7 +67,13 @@ def main():
         "--skip_low_info"
     ])
 
-    # 8) Backtest (optional, skipped for single week runs)
+    # 8) Trader sheet
+    sh([
+        py, "-m", "src.trader_sheet",
+        "--week_end", args.week_end
+    ])
+
+    # 9) Backtest (optional, skipped for single week runs)
     # The backtest requires --from_week_end and --to_week_end for multi-week backtests
     # For single week pipeline runs, it doesn't make sense to run backtest
     if not args.skip_backtest:
