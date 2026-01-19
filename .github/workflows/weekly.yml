@@ -8,6 +8,9 @@ on:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,15 +45,155 @@ jobs:
             data/derived/baskets/**
             data/live/scoreboard.csv
 
-      - name: Email links (or attachments)
-        uses: dawidd6/action-send-mail@v3
+      - name: Create notification issue
+        if: always()
+        uses: actions/github-script@v7
         with:
-          server_address: smtp.sendgrid.net
-          server_port: 587
-          username: apikey
-          password: ${{ secrets.SENDGRID_API_KEY }}
-          subject: Weekly Market Pressure Trader Sheet
-          to: fred.ugast@uspv.co
-          from: fred.ugast@uspv.co
-          body: |
-            Your weekly run completed. Download artifacts from the GitHub Actions run.
+          script: |
+            const week_end = new Date().toISOString().split('T')[0];
+            const status = '${{ job.status }}';
+            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const fs = require('fs');
+            
+            // Read scoreboard
+            let scoreboardSnippet = 'Scoreboard not available';
+            try {
+              const scoreboard = fs.readFileSync('data/live/scoreboard.csv', 'utf8');
+              const lines = scoreboard.split('\n').slice(0, 10);
+              scoreboardSnippet = '```\n' + lines.join('\n') + '\n```';
+            } catch (e) {
+              scoreboardSnippet = 'Could not read scoreboard';
+            }
+            
+            // Read trader sheet for action + top symbols
+            let actionDecision = 'UNKNOWN';
+            let topSymbols = 'Not available';
+            try {
+              const traderSheet = fs.readFileSync(`data/derived/trader_sheets/week_ending=${week_end}/trader_sheet.csv`, 'utf8');
+              const lines = traderSheet.split('\n');
+              
+              // Extract action from header comments or determine from content
+              const hasData = lines.length > 1 && lines[1].trim().length > 0;
+              actionDecision = hasData ? '📈 TRADE' : '⏸️ SKIP';
+              
+              // Get top 5 symbols
+              if (hasData) {
+                const symbols = lines.slice(1, 6)
+                  .filter(line => line.trim())
+                  .map(line => {
+                    const cols = line.split(',');
+                    const ticker = cols[0] || '?';
+                    const ups = cols[1] || '?';
+                    const conviction = cols[2] || '?';
+                    return `${ticker} (UPS: ${ups}, ${conviction})`;
+                  });
+                topSymbols = symbols.join('\n');
+              } else {
+                topSymbols = 'Low-information week: No trades';
+              }
+            } catch (e) {
+              topSymbols = `Could not read trader sheet: ${e.message}`;
+            }
+            
+            const body = `@fju7 — Your weekly market pressure scan is ready!
+            
+            ## 📊 Weekly Market Pressure Scan Complete
+            
+            **Week Ending:** ${week_end}
+            **Status:** ${status === 'success' ? '✅ Success' : '❌ Failed'}
+            
+            ### ${actionDecision}
+            
+            **Top 5 UPS Signals:**
+            \`\`\`
+            ${topSymbols}
+            \`\`\`
+            
+            ### Quick Stats
+            ${scoreboardSnippet}
+            
+            ### 🔗 Links
+            - **[📥 View Run & Download Artifacts](${runUrl})**
+            - Artifacts include: Trader Sheet, Weekly Report, Basket, Scoreboard
+            
+            ---
+            *This issue auto-closes in 7 days*`;
+            
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `📈 Weekly Scan: ${week_end}`,
+              body: body,
+              labels: ['weekly-scan', 'automated']
+            });
+            
+            // Schedule auto-close in 7 days
+            const closeDate = new Date();
+            closeDate.setDate(closeDate.getDate() + 7);
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              body: `🤖 This issue will auto-close on ${closeDate.toISOString().split('T')[0]}`
+            });
+            
+            // Return issue number for potential auto-close step
+            return issue.data.number;
+
+      - name: Schedule issue auto-close
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const week_end = new Date().toISOString().split('T')[0];
+            
+            // Find the issue we just created
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'weekly-scan',
+              state: 'open',
+              sort: 'created',
+              direction: 'desc',
+              per_page: 1
+            });
+            
+            if (issues.data.length > 0) {
+              const issue = issues.data[0];
+              const createdDate = new Date(issue.created_at);
+              const now = new Date();
+              const daysOld = (now - createdDate) / (1000 * 60 * 60 * 24);
+              
+              // Close issues older than 7 days
+              const oldIssues = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: 'weekly-scan',
+                state: 'open',
+                per_page: 100
+              });
+              
+              for (const oldIssue of oldIssues.data) {
+                const created = new Date(oldIssue.created_at);
+                const age = (now - created) / (1000 * 60 * 60 * 24);
+                
+                if (age >= 7) {
+                  await github.rest.issues.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: oldIssue.number,
+                    state: 'closed'
+                  });
+                  
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: oldIssue.number,
+                    body: '🤖 Auto-closed after 7 days'
+                  });
+                }
+              }
+            }
