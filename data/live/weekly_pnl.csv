@@ -1,0 +1,6 @@
+week_ending_date,symbol,entry_price,exit_price,return_pct,benchmark_return_pct,active_return_pct,notes
+2026-01-09,AAPL,270.64,259.37,-4.164203369790121,1.096804264864405,-5.261007634654526,Auto-calculated from candles (Mon open → Fri close)
+2026-01-09,MSFT,474.055,479.28,1.1021927835377678,1.096804264864405,0.0053885186733628,Auto-calculated from candles (Mon open → Fri close)
+2026-01-09,JPM,325.5,329.19,1.133640552995391,1.096804264864405,0.036836288130986,Auto-calculated from candles (Mon open → Fri close)
+2026-01-09,XOM,125.21,124.61,-0.4791949524798293,1.096804264864405,-1.5759992173442343,Auto-calculated from candles (Mon open → Fri close)
+2026-01-16,SKIP,0.0,0.0,0.0,0.0,0.0,Low information week

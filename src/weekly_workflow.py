@@ -51,14 +51,13 @@ MONDAY - Trade Execution (if TRADE):
   
   Then manually execute the trades and update entry_price if needed.
 
-FRIDAY - P&L Recording (if TRADE):
-  python -m src.weekly_workflow --week_end YYYY-MM-DD --mode friday_close \\
-    --exit_date YYYY-MM-DD
+FRIDAY - P&L Recording:
+  python -m src.weekly_workflow --week_end YYYY-MM-DD --mode friday_close
   
   This will:
-  1. Read entry prices from trades_log
-  2. Get exit prices from candles_daily
-  3. Calculate returns vs SPY
+  1. For TRADE weeks: Calculate returns using Monday open → Friday close from candles
+  2. For SKIP weeks: Log SKIP row with zeros
+  3. Calculate SPY benchmark returns
   4. Log to weekly_pnl.csv
 
 ANYTIME - Performance Analysis:
@@ -77,7 +76,6 @@ ANYTIME - Performance Analysis:
     )
     ap.add_argument("--execution_date", help="Trade execution date (for monday mode)")
     ap.add_argument("--account_value", type=float, help="Account value (for monday mode)")
-    ap.add_argument("--exit_date", help="Exit date for P&L (for friday_close mode)")
     ap.add_argument("--max_clusters_per_symbol", type=int, default=1)
     
     args = ap.parse_args()
@@ -162,36 +160,22 @@ ANYTIME - Performance Analysis:
         print(f"   4. On Friday: run with --mode friday_close --exit_date YYYY-MM-DD\n")
     
     elif args.mode == "friday_close":
-        # Friday: Record P&L
-        if not args.exit_date:
-            print("❌ --exit_date required for friday_close mode")
-            sys.exit(1)
-        
+        # Friday: Record P&L (automated from candles)
         print("\n📊 FRIDAY CLOSE: P&L Recording")
         print(f"   Week ending: {args.week_end}")
-        print(f"   Exit date: {args.exit_date}")
         
-        # Check if trades exist for this week
-        trades_path = Path("data/live/trades_log.csv")
-        if not trades_path.exists():
-            print("❌ No trades_log.csv found - did you execute Monday workflow?")
+        # Check if basket exists
+        basket_path = Path(f"data/derived/baskets/week_ending={args.week_end}/basket.csv")
+        if not basket_path.exists():
+            print(f"❌ Basket not found: {basket_path}")
+            print("   Run --mode friday first to generate signals")
             sys.exit(1)
         
-        import pandas as pd
-        trades = pd.read_csv(trades_path)
-        week_trades = trades[trades["notes"].str.contains(f"week ending {args.week_end}", na=False)]
-        
-        if week_trades.empty:
-            print(f"⏭️  No trades found for week ending {args.week_end}")
-            print("   This week was likely SKIP - no P&L to record")
-            sys.exit(0)
-        
-        # Log P&L
+        # Update P&L (auto-calculates from candles for TRADE or logs SKIP)
         run_command(
-            [py, "-m", "src.log_weekly_pnl",
-             "--week_end", args.week_end,
-             "--exit_date", args.exit_date],
-            "Logging weekly P&L"
+            [py, "-m", "src.update_weekly_pnl",
+             "--week_end", args.week_end],
+            "Auto-calculating weekly P&L from candles"
         )
         
         print("\n" + "="*70)

@@ -60,20 +60,22 @@ This will:
 
 ---
 
-### Friday Close - Record P&L (if TRADE)
+### Friday Close - Record P&L
 
+**For both TRADE and SKIP weeks:**
 ```bash
 python -m src.weekly_workflow \
   --week_end 2026-01-16 \
-  --mode friday_close \
-  --exit_date 2026-01-24
+  --mode friday_close
 ```
 
 This will:
-1. ✅ Read entry prices from `trades_log.csv`
-2. ✅ Get exit prices from `candles_daily.parquet`
-3. ✅ Calculate returns vs SPY benchmark
+1. ✅ For TRADE weeks: Calculate returns using Monday open → Friday close from candles
+2. ✅ For SKIP weeks: Log SKIP row with zeros and skip reason
+3. ✅ Calculate SPY benchmark returns
 4. ✅ Log to `weekly_pnl.csv`
+
+**No manual input needed** - all prices pulled from `candles_daily.parquet`
 
 ---
 
@@ -112,11 +114,9 @@ python -m src.log_trades \
   --account_value XXXXX
 ```
 
-### Friday Close (if TRADE)
+### Friday Close
 ```bash
-python -m src.log_weekly_pnl \
-  --week_end YYYY-MM-DD \
-  --exit_date YYYY-MM-DD
+python -m src.update_weekly_pnl --week_end YYYY-MM-DD
 ```
 
 ## Data Files
