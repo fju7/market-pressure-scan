@@ -10,3 +10,12 @@ venv/
 # Data (keep raw data out of repo by default)
 data/raw/
 data/derived/
+# Environment variables
+.env.local
+.env*.local
+
+# Web/Node
+web/node_modules/
+web/.next/
+web/.env*.local
+web/package-lock.json
