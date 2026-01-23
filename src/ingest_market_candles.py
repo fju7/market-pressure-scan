@@ -13,8 +13,8 @@ import pandas as pd
 import requests
 
 
-def fetch_candles(symbol: str, from_ts: int, to_ts: int, api_key: str) -> pd.DataFrame:
-    """Fetch daily candles from Finnhub API."""
+def fetch_candles(symbol: str, from_ts: int, to_ts: int, api_key: str, max_retries: int = 3) -> pd.DataFrame:
+    """Fetch daily candles from Finnhub API with retry logic for 429 errors."""
     url = "https://finnhub.io/api/v1/stock/candle"
     headers = {"X-Finnhub-Token": api_key}
     params = {
@@ -24,30 +24,47 @@ def fetch_candles(symbol: str, from_ts: int, to_ts: int, api_key: str) -> pd.Dat
         "to": to_ts
     }
     
-    response = requests.get(url, headers=headers, params=params)
-    response.raise_for_status()
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            
+            # Handle 429 rate limit with exponential backoff
+            if response.status_code == 429:
+                wait_time = 60 * (2 ** attempt)  # 60s, 120s, 240s
+                print(f"⚠ Rate limited (429), waiting {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("s") == "no_data":
+                return pd.DataFrame()
+            
+            if data.get("s") != "ok":
+                print(f"  ⚠ Error for {symbol}: {data}")
+                return pd.DataFrame()
+            
+            df = pd.DataFrame({
+                "symbol": symbol,
+                "date": pd.to_datetime(data["t"], unit="s").date,
+                "o": data["o"],
+                "h": data["h"],
+                "l": data["l"],
+                "c": data["c"],
+                "v": data["v"]
+            })
+            
+            return df
+            
+        except requests.exceptions.HTTPError as e:
+            if attempt == max_retries - 1:
+                raise
+            print(f"  ⚠ HTTP error (attempt {attempt+1}/{max_retries}): {e}")
+            time.sleep(5 * (attempt + 1))
     
-    data = response.json()
-    
-    if data.get("s") == "no_data":
-        print(f"  ⚠ No data for {symbol}")
-        return pd.DataFrame()
-    
-    if data.get("s") != "ok":
-        print(f"  ⚠ Error for {symbol}: {data}")
-        return pd.DataFrame()
-    
-    df = pd.DataFrame({
-        "symbol": symbol,
-        "date": pd.to_datetime(data["t"], unit="s").date,
-        "o": data["o"],
-        "h": data["h"],
-        "l": data["l"],
-        "c": data["c"],
-        "v": data["v"]
-    })
-    
-    return df
+    return pd.DataFrame()
 
 
 def main(universe_path: str, week_end: str):
@@ -78,6 +95,7 @@ def main(universe_path: str, week_end: str):
         symbols.append("SPY")
     
     print(f"📊 Fetching candles for {len(symbols)} symbols from {from_date} to {to_date}")
+    print(f"   Rate limit: ~1 call/second (60 calls/min for Finnhub free tier)\n")
     
     all_candles = []
     
@@ -92,12 +110,9 @@ def main(universe_path: str, week_end: str):
             else:
                 print("(skipped)")
             
-            # Rate limit: Finnhub free tier is 60 calls/min
-            if i % 50 == 0:
-                print(f"  💤 Rate limit pause...")
-                time.sleep(1)
-            else:
-                time.sleep(0.1)
+            # Rate limit: Finnhub free tier is 60 calls/min = 1 call/sec
+            # Use 1.1s to be safe and avoid bursts hitting the limit
+            time.sleep(1.1)
                 
         except Exception as e:
             print(f"✗ Error: {e}")

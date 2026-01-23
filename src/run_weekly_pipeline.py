@@ -2,6 +2,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+import pandas as pd
 
 from . import config
 
@@ -22,6 +23,24 @@ def main():
 
     # Validate config
     config.validate_config()
+    
+    # Validate universe file
+    universe_path = Path(args.universe)
+    if not universe_path.exists():
+        print(f"❌ ERROR: Universe file not found: {args.universe}")
+        sys.exit(1)
+    
+    universe_df = pd.read_csv(universe_path)
+    num_symbols = len(universe_df)
+    print(f"✓ Loaded universe: {args.universe} ({num_symbols} symbols)")
+    
+    # CRITICAL GUARD: Fail if production mode and universe too small
+    MIN_PRODUCTION_SYMBOLS = 350
+    if num_symbols < MIN_PRODUCTION_SYMBOLS:
+        print(f"❌ CRITICAL ERROR: Universe has only {num_symbols} symbols (minimum: {MIN_PRODUCTION_SYMBOLS})")
+        print(f"   This looks like a test universe file. Expected ~500 S&P 500 symbols.")
+        print(f"   Refusing to run pipeline to prevent invalid experiment data.")
+        sys.exit(1)
     
     # Use config defaults if not specified
     max_clusters = args.max_clusters_per_symbol if args.max_clusters_per_symbol is not None else config.get_max_clusters_per_symbol()
