@@ -391,10 +391,17 @@ def build_news_feature_panel(
         g["count_60d_dedup"] = g["total_clusters"].rolling(window=12, min_periods=1).sum()
         return g
 
-    weekly_counts = weekly_counts.groupby("symbol", group_keys=False).apply(add_roll)
+    weekly_counts = weekly_counts.groupby("symbol", group_keys=False).apply(add_roll).reset_index(drop=True)
 
     # Extract current week rows
     cur_counts = weekly_counts[weekly_counts["week_ending_date"] == week_end].copy()
+    
+    # Ensure symbol is a column (not index) for merging - precise fallback
+    if "symbol" not in cur_counts.columns:
+        if "symbol" in cur_counts.index.names:
+            cur_counts = cur_counts.reset_index()
+        else:
+            raise ValueError(f"'symbol' not found in columns or index. Columns: {cur_counts.columns.tolist()}, Index names: {cur_counts.index.names}")
 
     # NV_raw and NA_raw (as previously specified with scaling)
     cur_counts["NV_raw"] = np.log1p(cur_counts["count_5d_dedup"]) - np.log1p(cur_counts["count_60d_dedup"] / 12.0)
@@ -463,7 +470,45 @@ def build_news_feature_panel(
 
     # Cold start shrinkage
     # If history < novelty_min_history, blend toward cross-sectional median
-    median_ns = float(np.nanmedian(ns["NS_raw"].to_numpy()))
+    ns_array = ns["NS_raw"].to_numpy()
+    total_symbols = len(ns)
+    nan_count = np.sum(np.isnan(ns_array))
+    valid_count = total_symbols - nan_count
+    nan_pct = (nan_count / total_symbols * 100) if total_symbols > 0 else 0.0
+    
+    # Log novelty score coverage
+    print(f"  [Novelty] Total symbols: {total_symbols} | Valid NS_raw: {valid_count} ({100-nan_pct:.1f}%) | NaN: {nan_count} ({nan_pct:.1f}%)")
+    
+    # Detect complete failure vs partial degradation
+    if np.all(np.isnan(ns_array)):
+        # All NaN - likely embeddings pipeline broke or insufficient history
+        avg_history = ns["nov_hist_count"].mean() if len(ns) > 0 else 0
+        
+        error_msg = (
+            f"⚠️  WARNING: All NS_raw values are NaN ({total_symbols} symbols)!\n"
+            f"   Average history count: {avg_history:.1f}\n"
+        )
+        
+        # Decide: hard fail if embeddings broke, soft degrade if insufficient history
+        if avg_history < 1.0:
+            # Insufficient historical data - this is expected in early weeks
+            print(error_msg + "   Reason: Insufficient historical data (expected for early weeks)")
+            print("   → Setting median_ns = 0.0 and continuing with degraded novelty scores")
+            median_ns = 0.0
+        else:
+            # Have history but no embeddings - embeddings pipeline likely broke
+            print(error_msg + "   Reason: Historical data exists but no embeddings found")
+            print("   → This suggests the embeddings pipeline is broken!")
+            raise RuntimeError(
+                f"Embeddings pipeline failure: {total_symbols} symbols have history (avg={avg_history:.1f}) "
+                f"but all NS_raw are NaN. Check embedding generation in enrichment step."
+            )
+    elif nan_pct > 50.0:
+        # Partial degradation - warn but continue
+        print(f"  ⚠️  WARNING: High NaN rate ({nan_pct:.1f}%) in NS_raw - novelty scores may be degraded")
+        median_ns = float(np.nanmedian(ns_array))
+    else:
+        median_ns = float(np.nanmedian(ns_array))
     def shrink(row):
         val = row["NS_raw"]
         h = int(row["nov_hist_count"])
@@ -535,6 +580,31 @@ def build_news_feature_panel(
     ei = pd.DataFrame(ei_rows, columns=["symbol", "EI_raw", "EI_cnt_sev2plus", "EI_max"])
 
     # Assemble per-symbol panel for current week
+    # Sanity checks before merge - detailed diagnostics for debugging
+    if "symbol" not in cur_counts.columns:
+        raise ValueError(
+            f"cur_counts missing 'symbol' column.\n"
+            f"  Columns: {cur_counts.columns.tolist()}\n"
+            f"  Index names: {cur_counts.index.names}\n"
+            f"  Shape: {cur_counts.shape}\n"
+            f"  Sample index: {cur_counts.index[:3].tolist() if len(cur_counts) > 0 else 'empty'}"
+        )
+    if "symbol" not in ns.columns:
+        raise ValueError(
+            f"ns missing 'symbol' column.\n"
+            f"  Columns: {ns.columns.tolist()}\n"
+            f"  Index names: {ns.index.names}\n"
+            f"  Shape: {ns.shape}\n"
+            f"  Sample symbols: {ns.index[:3].tolist() if len(ns) > 0 else 'empty'}"
+        )
+    
+    # Sample join keys for verification
+    print(f"  [DEBUG] Merging on 'symbol': cur_counts has {len(cur_counts)} rows, ns has {len(ns)} rows")
+    if len(cur_counts) > 0:
+        print(f"  [DEBUG] cur_counts sample symbols: {cur_counts['symbol'].head(3).tolist()}")
+    if len(ns) > 0:
+        print(f"  [DEBUG] ns sample symbols: {ns['symbol'].head(3).tolist()}")
+    
     out = cur_counts.merge(ns[["symbol", "NS_raw_shrunk", "nov_hist_count", "nov_cur_reps"]], on="symbol", how="left")
     out = out.merge(ss, on="symbol", how="left")
     out = out.merge(ei, on="symbol", how="left")
