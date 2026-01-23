@@ -232,6 +232,12 @@ jobs:
               labels: ['weekly-scan', 'automated']
             });
             
+            // Ensure we have a numeric issue number (not node_id)
+            const issueNumber = parseInt(issue.data.number, 10);
+            if (!issueNumber || isNaN(issueNumber)) {
+              throw new Error(`Invalid issue number: ${issue.data.number}`);
+            }
+            
             // Schedule auto-close in 7 days
             const closeDate = new Date();
             closeDate.setDate(closeDate.getDate() + 7);
@@ -239,12 +245,12 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issue.data.number,
+              issue_number: issueNumber,
               body: `🤖 This issue will auto-close on ${closeDate.toISOString().split('T')[0]}`
             });
             
             // Return issue number for potential auto-close step
-            return issue.data.number;
+            return issueNumber;
 
       - name: Schedule issue auto-close
         if: always()
@@ -285,17 +291,20 @@ jobs:
                 const age = (now - created) / (1000 * 60 * 60 * 24);
                 
                 if (age >= 7) {
+                  // Ensure we use numeric issue number
+                  const oldIssueNumber = parseInt(oldIssue.number, 10);
+                  
                   await github.rest.issues.update({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
-                    issue_number: oldIssue.number,
+                    issue_number: oldIssueNumber,
                     state: 'closed'
                   });
                   
                   await github.rest.issues.createComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
-                    issue_number: oldIssue.number,
+                    issue_number: oldIssueNumber,
                     body: '🤖 Auto-closed after 7 days'
                   });
                 }

@@ -385,23 +385,53 @@ def build_news_feature_panel(
     # Rolling windows in weeks:
     # 5d ~ 1 week, 20d ~ 4 weeks, 60d ~ 12 weeks
     def add_roll(g: pd.DataFrame) -> pd.DataFrame:
+        # Guarantee symbol is a column inside each group (not index)
+        if "symbol" not in g.columns:
+            g = g.reset_index()
         g = g.sort_values("week_dt").copy()
         g["count_5d_dedup"] = g["total_clusters"]
         g["count_20d_dedup"] = g["total_clusters"].rolling(window=4, min_periods=1).sum()
         g["count_60d_dedup"] = g["total_clusters"].rolling(window=12, min_periods=1).sum()
         return g
 
-    weekly_counts = weekly_counts.groupby("symbol", group_keys=False).apply(add_roll).reset_index(drop=True)
-
-    # Extract current week rows
-    cur_counts = weekly_counts[weekly_counts["week_ending_date"] == week_end].copy()
+    weekly_counts = (
+        weekly_counts
+        .groupby("symbol", group_keys=False, sort=False)
+        .apply(add_roll)
+    )
     
-    # Ensure symbol is a column (not index) for merging - precise fallback
+    # Normalize index defensively (handles weird apply index behavior)
+    if isinstance(weekly_counts.index, pd.MultiIndex) and "symbol" in weekly_counts.index.names:
+        weekly_counts = weekly_counts.reset_index(level="symbol")
+    else:
+        weekly_counts = weekly_counts.reset_index(drop=True)
+    
+    # Now guarantee symbol is a column
+    if "symbol" not in weekly_counts.columns:
+        raise ValueError(
+            f"'symbol' missing after add_roll. Columns={weekly_counts.columns.tolist()} "
+            f"IndexNames={weekly_counts.index.names}"
+        )
+    
+    # Extract current week rows with explicit datetime handling
+    week_end_ts = pd.to_datetime(week_end)
+    weekly_counts["week_ending_date"] = pd.to_datetime(weekly_counts["week_ending_date"])
+    cur_counts = weekly_counts.loc[weekly_counts["week_ending_date"] == week_end_ts].copy()
+    
+    if cur_counts.empty:
+        raise ValueError(
+            f"cur_counts empty for week_end={week_end_ts.date()} after filtering. "
+            f"Check week_ending_date types and coverage. Available weeks: "
+            f"{sorted(weekly_counts['week_ending_date'].dt.date.unique().tolist())}"
+        )
+    
+    # Verify per-symbol data
     if "symbol" not in cur_counts.columns:
-        if "symbol" in cur_counts.index.names:
-            cur_counts = cur_counts.reset_index()
-        else:
-            raise ValueError(f"'symbol' not found in columns or index. Columns: {cur_counts.columns.tolist()}, Index names: {cur_counts.index.names}")
+        raise ValueError(f"'symbol' not found in cur_counts. Columns: {cur_counts.columns.tolist()}")
+    
+    symbol_count = cur_counts["symbol"].nunique()
+    if symbol_count == 0:
+        raise ValueError(f"cur_counts has no symbols for week_end={week_end_ts.date()}")
 
     # NV_raw and NA_raw (as previously specified with scaling)
     cur_counts["NV_raw"] = np.log1p(cur_counts["count_5d_dedup"]) - np.log1p(cur_counts["count_60d_dedup"] / 12.0)
@@ -410,9 +440,11 @@ def build_news_feature_panel(
     # --- Novelty (NS) ---
     # Current week embeddings per symbol, compare to historical embeddings prior weeks (exclude current week)
     # We compute NS_raw = 0.7*median(1 - topKmedian(sim)) + 0.3*p75(...)
-    df["week_dt"] = pd.to_datetime(df["week_ending_date"])
-    cur_df = df[df["week_ending_date"] == week_end].copy()
-    hist_df = df[df["week_ending_date"] != week_end].copy()
+    df["week_ending_date"] = pd.to_datetime(df["week_ending_date"])
+    week_end_ts = pd.to_datetime(week_end)
+    df["week_dt"] = df["week_ending_date"]
+    cur_df = df.loc[df["week_ending_date"] == week_end_ts].copy()
+    hist_df = df.loc[df["week_ending_date"] != week_end_ts].copy()
 
     # Prepare embedding arrays
     # embeddings stored as list[float] in parquet -> object; convert to np arrays
@@ -431,7 +463,9 @@ def build_news_feature_panel(
     hist_df = hist_df[hist_df["emb_vec"].notna()].copy()
 
     ns_rows = []
-    for sym in universe["symbol"].tolist():
+    # Use canonical symbol set (no duplicates, consistent case)
+    symbols = pd.Series(universe["symbol"]).dropna().astype(str).unique().tolist()
+    for sym in symbols:
         cur_sym = cur_df[cur_df["symbol"] == sym]
         if cur_sym.empty:
             ns_rows.append((sym, np.nan, 0, 0))
@@ -544,7 +578,9 @@ def build_news_feature_panel(
         return float(np.nansum(x * w) / wsum)
 
     sent_rows = []
-    for sym in universe["symbol"].tolist():
+    # Use canonical symbol set (no duplicates, consistent case)
+    symbols = pd.Series(universe["symbol"]).dropna().astype(str).unique().tolist()
+    for sym in symbols:
         c = cur_sent[cur_sent["symbol"] == sym]
         h = hist_sent[hist_sent["symbol"] == sym]
         sent_5d = wmean(c["sent_score_final"].to_numpy(dtype=float), c["w_rep"].to_numpy(dtype=float)) if not c.empty else 0.0
@@ -566,7 +602,9 @@ def build_news_feature_panel(
     # --- Event intensity (EI_raw) ---
     # EI_raw = sum(min(sev_final,2.5)) over current week clusters
     ei_rows = []
-    for sym in universe["symbol"].tolist():
+    # Use canonical symbol set (no duplicates, consistent case)
+    symbols = pd.Series(universe["symbol"]).dropna().astype(str).unique().tolist()
+    for sym in symbols:
         c = cur_sent[cur_sent["symbol"] == sym]
         if c.empty:
             ei_rows.append((sym, 0.0, 0, 0.0))
