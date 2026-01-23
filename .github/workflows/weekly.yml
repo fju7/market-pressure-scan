@@ -17,6 +17,8 @@ concurrency:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    outputs:
+      week_end: ${{ steps.week_end.outputs.week_end }}
     permissions:
       contents: read
       issues: write
@@ -97,7 +99,21 @@ jobs:
           )
           fi
           
-          echo "week_end=$WEEK_END" | tee week_end.txt
+          # Validate week_end format (strict ISO date check)
+          python - <<PY
+          import sys, datetime as dt
+          s = "${WEEK_END}"
+          try:
+              dt.date.fromisoformat(s)
+          except Exception as e:
+              print(f"Invalid week_end: {s!r} (expected YYYY-MM-DD)", file=sys.stderr)
+              sys.exit(2)
+          PY
+          
+          # Write to workspace root for Python scripts
+          echo "$WEEK_END" > "$GITHUB_WORKSPACE/week_end.txt"
+          
+          # Set outputs for workflow steps and job outputs
           echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
           echo "✓ Week ending: $WEEK_END"
 
