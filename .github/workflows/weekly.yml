@@ -32,16 +32,16 @@ jobs:
           import os
 
           event = os.environ.get("GITHUB_EVENT_NAME", "")
-          if event != "schedule":
-              print("Not a scheduled run; skipping time guard.")
-              raise SystemExit(0)
-
-          now = dt.datetime.now(ZoneInfo("America/New_York"))
-          if not (now.weekday() == 4 and now.hour == 16 and now.minute == 5):
-              print(f"Not 4:05pm ET Friday (now={now}). Exiting successfully.")
-              raise SystemExit(0)
-
-          print(f"Guard passed: now={now}")
+          
+          # Only enforce time guard for scheduled runs
+          if event == "schedule":
+              now = dt.datetime.now(ZoneInfo("America/New_York"))
+              if not (now.weekday() == 4 and now.hour == 16 and now.minute == 5):
+                  print(f"Not 4:05pm ET Friday (now={now}). Exiting successfully.")
+                  raise SystemExit(0)
+              print(f"Guard passed for scheduled run: now={now}")
+          else:
+              print(f"Manual run (event={event}), bypassing time guard. Proceeding.")
           PY
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
