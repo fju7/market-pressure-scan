@@ -251,11 +251,7 @@ jobs:
             
             ---
             *This issue auto-closes in 7 days*`;
-             of res.data) {
-                const created = new Date(issue.created_at);
-                const daysOld = (now - created) / (1000 * 60 * 60 * 24);
             
-                if (daysOl
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -280,9 +276,6 @@ jobs:
               issue_number: issueNumber,
               body: `🤖 This issue will auto-close on ${closeDate.toISOString().split('T')[0]}`
             });
-            
-            // Return issue number for potential auto-close step
-            return issueNumber;
 
       - name: Auto-close old weekly-scan issues
         if: always()
