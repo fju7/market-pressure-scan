@@ -133,7 +133,7 @@ jobs:
               scoreboardSnippet = 'Could not read scoreboard';
             }
             
-            // Read trader sheet for action + top symbols
+            // Read basket for action + top symbols (canonical source)
             let actionDecision = 'UNKNOWN';
             let topSymbols = 'Not available';
             let basketSize = 0;
@@ -141,31 +141,47 @@ jobs:
             let turnoverPct = null;
             
             try {
-              const traderSheet = fs.readFileSync(`data/derived/trader_sheets/week_ending=${week_end}/trader_sheet.csv`, 'utf8');
-              const lines = traderSheet.split('\n');
+              const basketPath = `data/derived/baskets/week_ending=${week_end}/basket.csv`;
+              const basketCsv = fs.readFileSync(basketPath, 'utf8').trim();
+              const rows = basketCsv.split('\n').filter(r => r.trim().length > 0);
               
-              // Extract action from header comments or determine from content
-              const hasData = lines.length > 1 && lines[1].trim().length > 0;
-              actionDecision = hasData ? '📈 TRADE' : '⏸️ SKIP';
+              // Parse header to find column indices
+              const header = rows[0].split(',');
+              const actionIdx = header.indexOf('action');
+              const reasonIdx = header.indexOf('reason');
+              const symbolIdx = header.indexOf('symbol');
+              const upsIdx = header.indexOf('UPS_adj');
+              const convictionIdx = header.indexOf('conviction');
               
-              // Get top 5 symbols and count basket size
-              if (hasData) {
-                const symbols = lines.slice(1, 6)
-                  .filter(line => line.trim())
-                  .map(line => {
-                    const cols = line.split(',');
-                    const ticker = cols[0] || '?';
-                    const ups = cols[1] || '?';
-                    const conviction = cols[2] || '?';
-                    return `${ticker} (UPS: ${ups}, ${conviction})`;
-                  });
-                topSymbols = symbols.join('\n');
-                basketSize = lines.slice(1).filter(line => line.trim()).length;
+              // Parse first data row to read action
+              const firstRow = rows[1]?.split(',') || [];
+              const action = actionIdx >= 0 ? (firstRow[actionIdx] || '').trim() : '';
+              
+              if (action === 'SKIP') {
+                actionDecision = '⏸️ SKIP';
+                const reason = reasonIdx >= 0 ? (firstRow[reasonIdx] || '').trim() : 'Low-information week';
+                topSymbols = reason || 'Low-information week';
+                basketSize = 0;
               } else {
-                topSymbols = 'Low-information week: No trades';
+                actionDecision = '📈 TRADE';
+                
+                // Count symbol rows (exclude header)
+                const symbolRows = rows.slice(1).filter(r => r.trim());
+                basketSize = symbolRows.length;
+                
+                // Top 5 from file order (already ranked by UPS)
+                const top5 = symbolRows.slice(0, 5).map(r => {
+                  const cols = r.split(',');
+                  const ticker = symbolIdx >= 0 ? (cols[symbolIdx] || '?').trim() : '?';
+                  const ups = upsIdx >= 0 ? (cols[upsIdx] || '?').trim() : '?';
+                  const conviction = convictionIdx >= 0 ? (cols[convictionIdx] || '?').trim() : '?';
+                  return `${ticker} (UPS: ${ups}, ${conviction})`;
+                });
+                
+                topSymbols = top5.join('\n');
               }
             } catch (e) {
-              topSymbols = `Could not read trader sheet: ${e.message}`;
+              topSymbols = `Could not read basket: ${e.message}`;
             }
             
             // Read weeks_log for turnover metrics
