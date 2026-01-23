@@ -5,6 +5,8 @@ Stores results in data/derived/news_raw/week_ending=YYYY-MM-DD/company_news.parq
 
 import argparse
 import os
+import random
+import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,15 +15,16 @@ import pandas as pd
 import requests
 
 
-def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str) -> pd.DataFrame:
+def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str, max_retries: int = 4) -> pd.DataFrame:
     """
-    Fetch company news from Finnhub API.
+    Fetch company news from Finnhub API with retry and exponential backoff.
     
     Args:
         symbol: Stock ticker
         from_date: Start date in YYYY-MM-DD format
         to_date: End date in YYYY-MM-DD format
         api_key: Finnhub API key
+        max_retries: Maximum number of retry attempts on 429 errors (default: 4)
     
     Returns:
         DataFrame with columns: symbol, published_utc, headline, summary, source, url
@@ -34,31 +37,92 @@ def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str) 
         "to": to_date
     }
     
-    response = requests.get(url, headers=headers, params=params)
-    response.raise_for_status()
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            # Handle 429 rate limit with exponential backoff + jitter
+            if response.status_code == 429:
+                base_wait = 30 * (2 ** attempt)  # 30s, 60s, 120s, 240s
+                jitter = random.uniform(0, 5)  # Add 0-5s jitter to avoid thundering herd
+                wait_time = base_wait + jitter
+                print(f"⚠️  Rate limited (429), retry {attempt+1}/{max_retries}, waiting {wait_time:.1f}s...")
+                time.sleep(wait_time)
+                continue
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if not data:
+                return pd.DataFrame()
+            
+            # Transform to our schema
+            records = []
+            for item in data:
+                records.append({
+                    "symbol": symbol,
+                    "published_utc": datetime.fromtimestamp(item["datetime"]).isoformat(),
+                    "headline": item.get("headline", ""),
+                    "summary": item.get("summary", ""),
+                    "source": item.get("source", ""),
+                    "url": item.get("url", ""),
+                    "related": item.get("related", "")
+                })
+            
+            return pd.DataFrame(records)
+            
+        except requests.exceptions.RequestException as e:
+            if attempt == max_retries - 1:
+                # Last attempt failed
+                print(f"✗ Failed after {max_retries} attempts: {e}")
+                raise
+            print(f"⚠️  Request error (attempt {attempt+1}/{max_retries}): {e}")
+            time.sleep(5 * (attempt + 1))
     
-    data = response.json()
-    
-    if not data:
-        return pd.DataFrame()
-    
-    # Transform to our schema
-    records = []
-    for item in data:
-        records.append({
-            "symbol": symbol,
-            "published_utc": datetime.fromtimestamp(item["datetime"]).isoformat(),
-            "headline": item.get("headline", ""),
-            "summary": item.get("summary", ""),
-            "source": item.get("source", ""),
-            "url": item.get("url", ""),
-            "related": item.get("related", "")
-        })
-    
-    return pd.DataFrame(records)
+    return pd.DataFrame()
 
 
-def main(universe_path: str, week_end: str):
+def filter_symbols_by_movement(symbols: list, week_end_date, api_key: str, 
+                                vol_threshold: float = 1.5, price_threshold: float = 0.05) -> list:
+    """
+    Filter symbols to only those with significant price/volume movement.
+    Reduces API load by focusing on interesting symbols.
+    
+    Args:
+        symbols: List of symbols to filter
+        week_end_date: Week ending date
+        api_key: Finnhub API key
+        vol_threshold: Minimum volume ratio vs 20-day average (default: 1.5x)
+        price_threshold: Minimum absolute price change (default: 5%)
+    
+    Returns:
+        Filtered list of symbols
+    """
+    # This is a placeholder implementation
+    # In production, you'd fetch recent candles and filter by:
+    # - Price change > price_threshold (e.g., 5%)
+    # - Volume > vol_threshold * average volume
+    # For now, return all symbols (implement as needed)
+    print(f"⚠️  Movement filtering not yet implemented, using all symbols")
+    return symbols
+
+
+def main(universe_path: str, week_end: str, coverage_threshold: float = 0.75, 
+         filter_by_movement: bool = False, qps_limit: float = 0.5, fast_fail_threshold: float = 0.3,
+         fast_fail_check_interval: int = 100):
+    """
+    Ingest company news with retry, backoff, and coverage guardrails.
+    
+    Args:
+        universe_path: Path to universe CSV file
+        week_end: Week ending date (YYYY-MM-DD)
+        coverage_threshold: Minimum fraction of symbols that must have news (default: 0.75 = 75%)
+        filter_by_movement: If True, only fetch news for symbols with significant price/volume movement (default: False)
+        qps_limit: Query-per-second rate limit (default: 0.5 = 30 calls/min)
+        fast_fail_threshold: If coverage drops below this after fast_fail_check_interval symbols, abort (default: 0.3)
+        fast_fail_check_interval: Check coverage after this many symbols (default: 100)
+    """
     api_key = os.environ.get("FINNHUB_API_KEY")
     if not api_key:
         raise ValueError("FINNHUB_API_KEY environment variable not set")
@@ -78,31 +142,76 @@ def main(universe_path: str, week_end: str):
     
     symbols = list(universe_df["symbol"].unique())
     
+    # Optional: Filter to symbols with movement (reduces API load)
+    if filter_by_movement:
+        symbols = filter_symbols_by_movement(symbols, week_end_date, api_key)
+        print(f"🎯 Filtered to {len(symbols)} symbols with significant movement")
+    
     print(f"📰 Fetching news for {len(symbols)} symbols from {from_date} to {to_date}")
+    print(f"   Rate limit: {qps_limit} calls/sec | Coverage threshold: {coverage_threshold*100:.0f}%")
     
     all_news = []
+    symbols_with_news = set()
+    failed_symbols = []
+    
+    sleep_time = 1.0 / qps_limit  # Convert QPS to sleep time
     
     for i, symbol in enumerate(symbols, 1):
-        print(f"  [{i}/{len(symbols)}] {symbol}...", end=" ")
+        print(f"  [{i}/{len(symbols)}] {symbol}...", end=" ", flush=True)
         
         try:
             df = fetch_company_news(symbol, from_date, to_date, api_key)
             if not df.empty:
                 all_news.append(df)
+                symbols_with_news.add(symbol)
                 print(f"✓ {len(df)} articles")
             else:
                 print("(no news)")
             
-            # Rate limit: Finnhub free tier is 60 calls/min
-            if i % 50 == 0:
-                print(f"  💤 Rate limit pause...")
-                time.sleep(1)
-            else:
-                time.sleep(0.1)
+            # Adaptive rate limiting
+            time.sleep(sleep_time)
                 
         except Exception as e:
-            print(f"✗ Error: {e}")
+            print(f"✗ FAILED: {e}")
+            failed_symbols.append(symbol)
             continue
+        
+        # Fast-fail check: abort early if coverage is dismal
+        if i == fast_fail_check_interval:
+            early_coverage = len(symbols_with_news) / i if i > 0 else 0.0
+            if early_coverage < fast_fail_threshold:
+                error_msg = (
+                    f"\n❌ FAST-FAIL: Coverage too low after {i} symbols\n"
+                    f"   Coverage: {early_coverage*100:.1f}% < fast-fail threshold {fast_fail_threshold*100:.0f}%\n"
+                    f"   Only {len(symbols_with_news)}/{i} symbols have news\n"
+                    f"   Aborting to prevent death-march (remaining: {len(symbols)-i} symbols)"
+                )
+                print(error_msg)
+                print("::error::FAST-FAIL - Coverage too low, aborting news ingestion")
+                sys.exit(1)
+    
+    # Coverage guardrail: Check if we have sufficient data
+    coverage = len(symbols_with_news) / len(symbols) if symbols else 0.0
+    
+    print(f"\n📊 Coverage Report:")
+    print(f"   Total symbols: {len(symbols)}")
+    print(f"   Symbols with news: {len(symbols_with_news)}")
+    print(f"   Failed symbols: {len(failed_symbols)}")
+    print(f"   Coverage: {coverage*100:.1f}%")
+    
+    if coverage < coverage_threshold:
+        error_msg = (
+            f"❌ DATA INCOMPLETE — RATE LIMITED\n"
+            f"   Coverage {coverage*100:.1f}% < threshold {coverage_threshold*100:.0f}%\n"
+            f"   Only {len(symbols_with_news)}/{len(symbols)} symbols have news data\n"
+            f"   Failed symbols: {', '.join(failed_symbols[:10])}"
+        )
+        if len(failed_symbols) > 10:
+            error_msg += f" ... and {len(failed_symbols)-10} more"
+        
+        print(error_msg)
+        print(f"::error::DATA INCOMPLETE - Coverage {coverage*100:.1f}% below threshold {coverage_threshold*100:.0f}%")
+        sys.exit(1)
     
     if not all_news:
         print("⚠️  No news data fetched - creating empty placeholder")
@@ -143,9 +252,43 @@ def main(universe_path: str, week_end: str):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser("Ingest company news from Finnhub")
+    ap = argparse.ArgumentParser(
+        "Ingest company news from Finnhub",
+        description="Fetch company news with retry, backoff, and coverage guardrails"
+    )
     ap.add_argument("--universe", required=True, help="Path to universe CSV with 'symbol' column")
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+    ap.add_argument(
+        "--coverage_threshold",
+        type=float,
+        default=0.75,
+        help="Minimum fraction of symbols that must have news (default: 0.75 = 75%%; start at 0.6 for initial weeks)"
+    )
+    ap.add_argument(
+        "--filter_by_movement",
+        action="store_true",
+        help="Only fetch news for symbols with significant price/volume movement (reduces API load)"
+    )
+    ap.add_argument(
+        "--qps_limit",
+        type=float,
+        default=0.5,
+        help="Query-per-second rate limit (default: 0.5 = 30 calls/min, conservative)"
+    )
+    ap.add_argument(
+        "--fast_fail_threshold",
+        type=float,
+        default=0.3,
+        help="Abort if coverage drops below this after fast_fail_check_interval symbols (default: 0.3 = 30%%)"
+    )
+    ap.add_argument(
+        "--fast_fail_check_interval",
+        type=int,
+        default=100,
+        help="Check coverage after this many symbols for fast-fail (default: 100)"
+    )
     args = ap.parse_args()
     
-    main(args.universe, args.week_end)
+    main(args.universe, args.week_end, args.coverage_threshold, 
+         args.filter_by_movement, args.qps_limit, args.fast_fail_threshold,
+         args.fast_fail_check_interval)

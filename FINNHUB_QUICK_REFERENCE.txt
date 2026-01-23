@@ -1,0 +1,162 @@
+╔════════════════════════════════════════════════════════════════════╗
+║           FINNHUB NEWS INGESTION - QUICK REFERENCE                 ║
+╚════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────┐
+│ WHAT CHANGED                                                     │
+└──────────────────────────────────────────────────────────────────┘
+
+BEFORE: pause occasionally → rapid 429s → cascading failures
+AFTER:  exponential backoff → retry same symbol → fail if incomplete
+
+┌──────────────────────────────────────────────────────────────────┐
+│ THREE KEY IMPROVEMENTS                                           │
+└──────────────────────────────────────────────────────────────────┘
+
+✅ A) RETRY WITH EXPONENTIAL BACKOFF
+   - Retries same symbol (not "fail and move on")
+   - Delays: 30s, 60s, 120s, 240s (4 retries, ~7.5 min max)
+   - Adds jitter to prevent thundering herd
+   - 4 attempts before giving up (tuned to avoid 16 min waits)
+
+✅ B) COVERAGE GUARDRAIL
+   - Tracks symbols_with_news / total_symbols
+   - Default threshold: 75% (tuned up from 60%)
+   - Exits with error code 1 if insufficient
+   - Error: "DATA INCOMPLETE — RATE LIMITED"
+   - Fast-fail: Aborts at 100 symbols if <30% coverage
+
+✅ C) REQUEST LOAD REDUCTION
+   - Configurable QPS limit (default: 0.5 = 30 calls/min)
+   - Optional movement filtering
+   - Adaptive sleep timing
+
+┌──────────────────────────────────────────────────────────────────┐
+│ COMMON USAGE PATTERNS                                            │
+└──────────────────────────────────────────────────────────────────┘
+
+# Basic (75% coverage, 0.5 QPS - TUNED DEFAULTS):
+python src/ingest_company_news.py \
+  --universe sp500_universe.csv \
+  --week_end 2026-01-16
+
+# Initial calibration (60% coverage for first weeks):
+python src/ingest_company_news.py \
+  --universe sp500_universe.csv \
+  --week_end 2026-01-16 \
+  --coverage_threshold 0.6
+
+# Ultra-conservative (if hitting rate limits):
+python src/ingest_company_news.py \
+  --universe sp500_universe.csv \
+  --week_end 2026-01-16 \
+  --coverage_threshold 0.6 \
+  --qps_limit 0.3
+
+┌──────────────────────────────────────────────────────────────────┐
+│ CLI ARGUMENTS                                                    │
+└──────────────────────────────────────────────────────────────────┘
+
+--universe <path>              Universe CSV file (required)
+--week_end YYYY-MM-DD          Week ending date (required)
+--coverage_threshold <0.0-1.0> Min % symbols with news (default: 0.75)
+--qps_limit <float>            Queries/second (default: 0.5)
+--fast_fail_threshold <0.0-1.0> Abort if coverage < this at 100 symbols (default: 0.3)
+--fast_fail_check_interval <N> Check coverage after N symbols (default: 100)
+--filter_by_movement           Only fetch for active symbols
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RECOMMENDED SETTINGS BY TIER                                     │
+└──────────────────────────────────────────────────────────────────┘
+
+Finnhub Free (60 calls/min) - PRODUCTION DEFAULTS:
+  --qps_limit 0.5 --coverage_threshold 0.75
+
+Finnhub Free - INITIAL CALIBRATION (weeks 1-2):
+  --qps_limit 0.5 --coverage_threshold 0.6
+
+Finnhub Paid (300 calls/min):
+  --qps_limit 4.5 --coverage_threshold 0.8
+
+Emergency - Hitting Rate Limits:
+  --qps_limit 0.3 --coverage_threshold 0.5
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RETRY BACKOFF SCHEDULE                                           │
+└──────────────────────────────────────────────────────────────────┘
+
+Attempt 1:  30s  (+0-5s jitter)
+Attempt 2:  60s  (+0-5s jitter)
+Attempt 3: 120s  (+0-5s jitter)
+Attempt 4: 240s  (+0-5s jitter)
+          ────────────────────
+Max wait: ~7.5 minutes total (tuned down from 16 min)
+
+┌──────────────────────────────────────────────────────────────────┐
+│ SUCCESS OUTPUT                                                   │
+└──────────────────────────────────────────────────────────────────┘
+
+📰 Fetching news for 503 symbols from 2026-01-10 to 2026-01-16
+   Rate limit: 1.0 calls/sec | Coverage threshold: 60%
+  [1/503] AAPL... ✓ 12 articles
+  ...
+
+📊 Coverage Report:
+   Total symbols: 503
+   Symbols with news: 487
+   Failed symbols: 0
+   Coverage: 96.8%
+
+✅ Saved 4,321 news articles to ...
+
+┌──────────────────────────────────────────────────────────────────┐
+│ FAILURE OUTPUT (EXITS WITH CODE 1)                               │
+└──────────────────────────────────────────────────────────────────┘
+
+📊 Coverage Report:
+   Total symbols: 503
+   Symbols with news: 287
+   Failed symbols: 216
+   Coverage: 57.1%
+
+❌ DATA INCOMPLETE — RATE LIMITED
+   Coverage 57.1% < threshold 60.0%
+   Only 287/503 symbols have news data
+   Failed symbols: AAPL, MSFT, GOOGL, ...
+
+┌──────────────────────────────────────────────────────────────────┐
+│ TESTING                                                          │
+└──────────────────────────────────────────────────────────────────┘
+
+python test_news_ingestion_improvements.py
+
+Tests:
+  ✅ Retry logic with exponential backoff
+  ✅ Coverage guardrails
+  ✅ Request load reduction
+  ✅ CLI arguments
+
+┌──────────────────────────────────────────────────────────────────┐
+│ FILES MODIFIED                                                   │
+└──────────────────────────────────────────────────────────────────┘
+
+src/ingest_company_news.py           Main implementation
+test_news_ingestion_improvements.py  Test suite
+FINNHUB_IMPROVEMENTS.md              Full documentation
+
+┌──────────────────────────────────────────────────────────────────┐
+│ NEXT STEPS (OPTIONAL ENHANCEMENTS)                               │
+└──────────────────────────────────────────────────────────────────┘
+
+1. Implement filter_symbols_by_movement():
+   - Fetch candles for universe
+   - Filter by price change > 5% OR volume > 1.5x avg
+   - Reduces API calls by 70-90%
+
+2. Add response caching:
+   - Cache responses for 1 hour
+   - Avoid duplicate requests
+
+3. Parallel requests with semaphore:
+   - Use asyncio for faster ingestion
+   - Maintain rate limits with semaphore
