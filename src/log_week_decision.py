@@ -63,24 +63,48 @@ def load_and_normalize_weeks_log(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=CANON_COLS)
 
+    # Count original lines for repair diagnostics
+    with open(path, 'r') as f:
+        original_line_count = sum(1 for _ in f)
+    
+    had_parse_error = False
     try:
         df = pd.read_csv(path)
     except pd.errors.ParserError as e:
         print(f"⚠️  weeks_log.csv parse error: {e}")
         print("    Attempting recovery with python engine...")
+        had_parse_error = True
         df = pd.read_csv(path, engine="python", on_bad_lines="skip")
+        
+        # Report dropped lines (if any)
+        recovered_rows = len(df)
+        expected_rows = original_line_count - 1  # -1 for header
+        if recovered_rows < expected_rows:
+            dropped = expected_rows - recovered_rows
+            print(f"⚠️  weeks_log.csv repair: recovered_rows={recovered_rows} dropped_lines≈{dropped}")
 
     # Normalize schema (upgrade older logs that might be missing columns)
+    schema_upgraded = False
     for c in CANON_COLS:
         if c not in df.columns:
             df[c] = ""
+            schema_upgraded = True
 
     # Reorder to canonical column order
     df = df[CANON_COLS]
 
     # Rewrite in canonical format w/ safe quoting (repairs old headers + corruption)
     df.to_csv(path, index=False, quoting=csv.QUOTE_ALL)
-    print(f"✅ Normalized weeks_log.csv schema ({len(df)} existing rows)")
+    
+    # Detailed diagnostics
+    status_flags = []
+    if had_parse_error:
+        status_flags.append("repaired")
+    if schema_upgraded:
+        status_flags.append("upgraded")
+    
+    status_str = f" [{', '.join(status_flags)}]" if status_flags else ""
+    print(f"✅ weeks_log.csv normalized: cols={len(df.columns)} rows={len(df)} quoting=QUOTE_ALL{status_str}")
     
     return df
 
@@ -116,7 +140,7 @@ def log_week_decision(week_end: str) -> str:
         # Find most recent prior TRADE week
         log_path = Path("data/live/weeks_log.csv")
         if log_path.exists():
-            weeks_log = pd.read_csv(log_path)
+            weeks_log = load_and_normalize_weeks_log(log_path)
             prior_trades = weeks_log[
                 (weeks_log["action"] == "TRADE") & 
                 (weeks_log["week_ending_date"] < week_end)
