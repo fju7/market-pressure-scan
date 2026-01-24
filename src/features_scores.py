@@ -389,21 +389,39 @@ def build_news_feature_panel(
     def add_roll(g: pd.DataFrame) -> pd.DataFrame:
         # Use g.name to get the grouping key value (symbol)
         # This is the authoritative source - don't rely on index manipulation
-        symbol_val = g.name
+        sym = getattr(g, "name", None)
         
-        # Ensure symbol exists as a column at function entry
-        if "symbol" not in g.columns:
-            g = g.copy()
-            g["symbol"] = symbol_val
+        # Normalize group key - detect unexpected tuple keys from multi-level groupby
+        if isinstance(sym, tuple):
+            raise ValueError(f"add_roll: unexpected tuple group key g.name={sym} (groupby changed?)")
         
-        g = g.sort_values("week_dt").copy()
+        if sym is None:
+            raise ValueError("add_roll: missing group key (g.name is None)")
+        
+        # Debug print for first symbol alphabetically (won't spam CI)
+        if sym == "AAPL":
+            print(f"DEBUG add_roll: g.name={sym}, type={type(sym)}")
+            print(f"DEBUG add_roll: columns={list(g.columns)}, index.name={g.index.name}, index.names={getattr(g.index, 'names', None)}")
+        
+        g = g.copy()
+        
+        # Force symbol column to exist immediately (overwrite is intentional)
+        if "symbol" in g.columns:
+            # If it's already there, validate it is consistent
+            bad = g["symbol"].notna() & (g["symbol"] != sym)
+            if bad.any():
+                raise ValueError(f"add_roll: symbol column inconsistent with group key {sym}")
+        g["symbol"] = sym
+        
+        # Perform rolling computations
+        g = g.sort_values("week_dt")
         g["count_5d_dedup"] = g["total_clusters"]
         g["count_20d_dedup"] = g["total_clusters"].rolling(window=4, min_periods=1).sum()
         g["count_60d_dedup"] = g["total_clusters"].rolling(window=12, min_periods=1).sum()
         
-        # Correctness check: ensure symbol is preserved (prevents regressions)
+        # Final invariant: never return without symbol
         if "symbol" not in g.columns:
-            raise ValueError(f"add_roll dropped symbol. cols={list(g.columns)} index_names={g.index.names}")
+            raise ValueError("add_roll: BUG - symbol dropped inside add_roll")
         
         return g
 
@@ -683,6 +701,63 @@ def build_news_feature_panel(
 # UPS scoring
 # ----------------------------
 
+def validate_feature_panel_contract(panel: pd.DataFrame, context: str = "feature_panel") -> None:
+    """
+    Validates that the feature panel meets the contract requirements before scoring.
+    Raises ValueError with detailed diagnostics if any invariant is violated.
+    """
+    errors = []
+    
+    # 1. symbol must be a column, not index
+    if "symbol" not in panel.columns:
+        errors.append(f"❌ 'symbol' is not a column. Columns: {list(panel.columns)}")
+        errors.append(f"   Index names: {panel.index.names}")
+    
+    # 2. week_ending_date must be present
+    if "week_ending_date" not in panel.columns:
+        errors.append(f"❌ 'week_ending_date' missing. Columns: {list(panel.columns)}")
+    
+    # 3. No unexpected 'index' column (indicates unnamed index materialization)
+    if "index" in panel.columns:
+        errors.append(f"❌ Unexpected 'index' column found (unnamed index materialization)")
+        errors.append(f"   Columns: {list(panel.columns)}")
+    
+    # 4. Required feature columns for scoring
+    required_features = ["NV_raw", "NA_raw", "NS_raw", "SS_raw", "EI_raw", "EC_raw"]
+    missing_features = [f for f in required_features if f not in panel.columns]
+    if missing_features:
+        errors.append(f"❌ Missing required feature columns: {missing_features}")
+    
+    # If symbol exists, do additional checks
+    if "symbol" in panel.columns and "week_ending_date" in panel.columns:
+        # 5. Check for duplicate (symbol, week_ending_date) pairs
+        dup_count = panel.duplicated(["symbol", "week_ending_date"]).sum()
+        if dup_count > 0:
+            errors.append(f"❌ Found {dup_count} duplicate (symbol, week_ending_date) pairs")
+            # Show sample duplicates
+            dups = panel[panel.duplicated(["symbol", "week_ending_date"], keep=False)]
+            errors.append(f"   Sample duplicates:\n{dups[['symbol', 'week_ending_date']].head(10)}")
+    
+    # Raise if any errors
+    if errors:
+        error_msg = f"\n{context} contract validation failed:\n" + "\n".join(errors)
+        error_msg += f"\n\nPanel shape: {panel.shape}"
+        error_msg += f"\nPanel dtypes:\n{panel.dtypes}"
+        raise ValueError(error_msg)
+    
+    # Success - print diagnostics
+    print(f"✓ {context} contract validated:")
+    print(f"  - Shape: {panel.shape}")
+    print(f"  - Columns: {list(panel.columns)}")
+    print(f"  - Index: {panel.index.names}")
+    print(f"  - Has 'symbol': True (column)")
+    print(f"  - Has 'week_ending_date': True")
+    print(f"  - No 'index' column: True")
+    print(f"  - Required features present: {len(required_features)}/{len(required_features)}")
+    if "symbol" in panel.columns and "week_ending_date" in panel.columns:
+        print(f"  - Unique (symbol, week) pairs: {len(panel)} (no duplicates)")
+
+
 def compute_scores(
     panel: pd.DataFrame,
     mkt: pd.DataFrame,
@@ -796,7 +871,58 @@ def run(
         lookback_weeks=lookback_weeks,
     )
 
+    # Validate panel contract before scoring
+    validate_feature_panel_contract(panel, context="build_news_feature_panel output")
+
+    print("▶ Computing scores from validated feature panel...")
     features, scores = compute_scores(panel, mkt, universe)
+
+    # Scoring self-check diagnostics
+    print("\n" + "="*60)
+    print("📊 SCORING SELF-CHECK")
+    print("="*60)
+    
+    # Check for NaN features
+    scoring_features = ["NV", "NA", "NS", "SS", "EI", "EC", "AR5", "VS_raw", "RV60"]
+    nan_pcts = {}
+    for feat in scoring_features:
+        if feat in features.columns:
+            nan_pct = features[feat].isna().sum() / len(features) * 100
+            nan_pcts[feat] = nan_pct
+    
+    # Show top 10 worst NaN offenders
+    if nan_pcts:
+        print(f"\nNaN% per feature (top 10 worst):")
+        sorted_nans = sorted(nan_pcts.items(), key=lambda x: x[1], reverse=True)[:10]
+        for feat, pct in sorted_nans:
+            print(f"  {feat:15s}: {pct:5.1f}%")
+    
+    # Score distribution
+    print(f"\nScores DataFrame:")
+    print(f"  Rows: {len(scores)}")
+    print(f"  Symbols eligible for scoring: {scores['symbol'].nunique() if 'symbol' in scores.columns else 'N/A'}")
+    
+    if "UPS_adj" in scores.columns:
+        ups_valid = scores["UPS_adj"].notna() & np.isfinite(scores["UPS_adj"])
+        print(f"\nUPS_adj distribution:")
+        print(f"  Valid (finite, non-NaN): {ups_valid.sum()} / {len(scores)} ({ups_valid.sum()/len(scores)*100:.1f}%)")
+        if ups_valid.any():
+            valid_ups = scores.loc[ups_valid, "UPS_adj"]
+            print(f"  Min:    {valid_ups.min():.4f}")
+            print(f"  Median: {valid_ups.median():.4f}")
+            print(f"  Max:    {valid_ups.max():.4f}")
+            
+            # Top 5 and bottom 5
+            top5 = scores.nlargest(5, "UPS_adj")[["symbol", "UPS_adj"]]
+            bottom5 = scores.nsmallest(5, "UPS_adj")[["symbol", "UPS_adj"]]
+            print(f"\nTop 5 symbols by UPS_adj:")
+            for idx, row in top5.iterrows():
+                print(f"  {row['symbol']:6s}: {row['UPS_adj']:7.4f}")
+            print(f"\nBottom 5 symbols by UPS_adj:")
+            for idx, row in bottom5.iterrows():
+                print(f"  {row['symbol']:6s}: {row['UPS_adj']:7.4f}")
+    
+    print("="*60 + "\n")
 
     # Write outputs
     out_feat_dir = paths.out_features_dir / f"week_ending={week_end}"
