@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import inspect
 import json
 import math
 import os
+import platform
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,6 +16,28 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from dateutil import tz
+
+# ----------------------------
+# Debug helpers
+# ----------------------------
+
+def _debug_env_stamp():
+    print("=== FEATURES_SCORES DEBUG STAMP ===")
+    print("module_file:", __file__)
+    print("python:", platform.python_version())
+    print("pandas:", pd.__version__, "numpy:", np.__version__)
+    try:
+        src = Path(__file__).read_bytes()
+        print("features_scores.py sha256:", hashlib.sha256(src).hexdigest()[:16])
+    except Exception as e:
+        print("sha256 read failed:", e)
+    print("===================================")
+
+def dump_df(df: pd.DataFrame, out_dir: Path, name: str):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = out_dir / f"{name}.csv"
+    df.to_csv(p, index=True)
+    print(f"📦 dumped df -> {p} (shape={df.shape}, index_names={df.index.names})")
 
 # ----------------------------
 # Config / paths
@@ -285,6 +310,7 @@ def build_news_feature_panel(
       - EI_raw (event intensity)
       - echo metrics
     """
+    _debug_env_stamp()
     weeks = list_prior_weeks(week_end_et, n_weeks=lookback_weeks)
     # Load clusters and rep_enriched for available weeks
     cluster_frames = []
@@ -384,7 +410,10 @@ def build_news_feature_panel(
 
     # Rolling windows in weeks:
     # 5d ~ 1 week, 20d ~ 4 weeks, 60d ~ 12 weeks
+    debug_dir = paths.derived / "debug_ci" / f"week_ending={week_end}"
+    
     print("[DEBUG] pre add_roll cols:", list(weekly_counts.columns), "index.names:", weekly_counts.index.names)
+    dump_df(weekly_counts.head(200), debug_dir, "weekly_counts_pre_add_roll_head")
     
     def add_roll(g: pd.DataFrame) -> pd.DataFrame:
         # Use g.name to get the grouping key value (symbol)
@@ -425,12 +454,34 @@ def build_news_feature_panel(
         
         return g
 
-    weekly_counts = (
-        weekly_counts
-        .groupby("symbol", group_keys=False, sort=False)
-        .apply(add_roll)
-        .reset_index(drop=True)
-    )
+    try:
+        weekly_counts_tmp = (
+            weekly_counts
+            .groupby("symbol", group_keys=False, sort=False)
+            .apply(add_roll)
+        )
+        dump_df(weekly_counts_tmp.head(200), debug_dir, "weekly_counts_post_apply_head")
+        
+        # Contract check immediately after apply (before reset)
+        if isinstance(weekly_counts_tmp, pd.Series):
+            raise ValueError(f"apply(add_roll) returned Series (unexpected). name={weekly_counts_tmp.name}")
+        
+        if not isinstance(weekly_counts_tmp, pd.DataFrame):
+            raise ValueError(f"apply(add_roll) returned {type(weekly_counts_tmp)} (unexpected).")
+        
+        if "symbol" not in weekly_counts_tmp.columns:
+            raise ValueError(
+                f"'symbol' missing immediately after apply(add_roll). "
+                f"cols={weekly_counts_tmp.columns.tolist()} index_names={weekly_counts_tmp.index.names}"
+            )
+        
+        weekly_counts = weekly_counts_tmp.reset_index(drop=True)
+        dump_df(weekly_counts.head(200), debug_dir, "weekly_counts_post_reset_head")
+        
+    except Exception:
+        # Dump full frames if it blows up (weekly_counts should be manageable)
+        dump_df(weekly_counts, debug_dir, "weekly_counts_pre_add_roll_FULL")
+        raise
     
     print("[DEBUG] post add_roll cols:", list(weekly_counts.columns), "index.names:", weekly_counts.index.names)
     if "symbol" in weekly_counts.columns:
@@ -606,8 +657,8 @@ def build_news_feature_panel(
 
     df["w_rep"] = df.apply(lambda r: rep_weight(r), axis=1)
 
-    cur_sent = df[df["week_ending_date"] == week_end].copy()
-    hist_sent = df[df["week_ending_date"] != week_end].copy()
+    cur_sent = df[df["week_ending_date"] == week_end_ts].copy()
+    hist_sent = df[df["week_ending_date"] != week_end_ts].copy()
 
     # Aggregate weighted sentiment
     def wmean(x: np.ndarray, w: np.ndarray) -> float:
