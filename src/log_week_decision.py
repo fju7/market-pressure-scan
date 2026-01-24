@@ -8,11 +8,81 @@ and logs the decision to weeks_log.csv for tracking purposes.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+
+
+CANON_COLS = [
+    "week_ending_date",
+    "action",
+    "basket_size",
+    "overlap_pct",
+    "turnover_pct",
+    "num_clusters",
+    "avg_novelty_z",
+    "avg_event_intensity_z",
+    "recap_pct",
+    "is_low_info",
+    "num_positions",
+    "logged_at",
+    "skip_reason",
+]
+
+
+def clean_text(x: str) -> str:
+    """Sanitize text fields to prevent CSV corruption from newlines/commas"""
+    if not isinstance(x, str):
+        return ""
+    return " ".join(x.replace("\r", " ").replace("\n", " ").split())
+
+
+def load_and_normalize_weeks_log(path: Path) -> pd.DataFrame:
+    """
+    Load weeks_log.csv with schema normalization and error recovery.
+    
+    This function:
+    - Creates an empty DataFrame with canonical columns if file doesn't exist
+    - Handles parse errors gracefully by falling back to python engine
+    - Normalizes schema by adding any missing columns
+    - Rewrites the file in canonical format with proper quoting to repair corruption
+    
+    Parameters
+    ----------
+    path : Path
+        Path to weeks_log.csv
+    
+    Returns
+    -------
+    pd.DataFrame
+        Normalized DataFrame with all canonical columns
+    """
+    if not path.exists():
+        return pd.DataFrame(columns=CANON_COLS)
+
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.ParserError as e:
+        print(f"⚠️  weeks_log.csv parse error: {e}")
+        print("    Attempting recovery with python engine...")
+        df = pd.read_csv(path, engine="python", on_bad_lines="skip")
+
+    # Normalize schema (upgrade older logs that might be missing columns)
+    for c in CANON_COLS:
+        if c not in df.columns:
+            df[c] = ""
+
+    # Reorder to canonical column order
+    df = df[CANON_COLS]
+
+    # Rewrite in canonical format w/ safe quoting (repairs old headers + corruption)
+    df.to_csv(path, index=False, quoting=csv.QUOTE_ALL)
+    print(f"✅ Normalized weeks_log.csv schema ({len(df)} existing rows)")
+    
+    return df
 
 
 def log_week_decision(week_end: str) -> str:
@@ -76,6 +146,10 @@ def log_week_decision(week_end: str) -> str:
     
     # Prepare log entry
     # Use cluster_count from report_meta.json (single source of truth)
+    skip_reason = ""
+    if action == "SKIP":
+        skip_reason = basket["reason"].iloc[0] if "reason" in basket.columns else ""
+    
     log_entry = {
         "week_ending_date": week_end,
         "action": action,
@@ -89,33 +163,26 @@ def log_week_decision(week_end: str) -> str:
         "is_low_info": meta.get("is_low_information_week", False),
         "num_positions": len(basket) if action == "TRADE" else 0,
         "logged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "skip_reason": clean_text(skip_reason),  # Clean to prevent CSV corruption
     }
-    
-    if action == "SKIP":
-        log_entry["skip_reason"] = basket["reason"].iloc[0] if "reason" in basket.columns else ""
-    else:
-        log_entry["skip_reason"] = ""
     
     # Append to weeks_log.csv
     log_path = Path("data/live/weeks_log.csv")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     
-    df = pd.DataFrame([log_entry])
+    # Load and normalize existing log (handles schema drift and corruption)
+    existing = load_and_normalize_weeks_log(log_path)
     
-    if log_path.exists():
-        # Check if this week is already logged
-        existing = pd.read_csv(log_path)
-        if week_end in existing["week_ending_date"].values:
-            print(f"⚠️  Week {week_end} already logged. Skipping.")
-            return action
-        
-        # Append mode
-        df.to_csv(log_path, mode="a", header=False, index=False)
-        print(f"✅ Appended week {week_end} to {log_path}")
-    else:
-        # Create new file with header
-        df.to_csv(log_path, index=False)
-        print(f"✅ Created {log_path} with week {week_end}")
+    if week_end in existing["week_ending_date"].astype(str).values:
+        print(f"⚠️  Week {week_end} already logged. Skipping.")
+        return action
+    
+    # Create row with canonical column order
+    row = pd.DataFrame([{c: log_entry.get(c, "") for c in CANON_COLS}])
+    
+    # Append with safe quoting to prevent future corruption
+    row.to_csv(log_path, mode="a", header=False, index=False, quoting=csv.QUOTE_ALL)
+    print(f"✅ Appended week {week_end} to {log_path}")
     
     # Display summary
     print(f"\n📊 Week {week_end} summary:")
