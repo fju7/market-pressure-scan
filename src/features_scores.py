@@ -384,27 +384,64 @@ def build_news_feature_panel(
 
     # Rolling windows in weeks:
     # 5d ~ 1 week, 20d ~ 4 weeks, 60d ~ 12 weeks
+    print("[DEBUG] pre add_roll cols:", list(weekly_counts.columns), "index.names:", weekly_counts.index.names)
+    
     def add_roll(g: pd.DataFrame) -> pd.DataFrame:
         # Guarantee symbol is a column inside each group (not index)
+        # When group_keys=True, the groupby key becomes part of the index
         if "symbol" not in g.columns:
-            g = g.reset_index()
+            # Check if symbol is in the index
+            if g.index.name == "symbol":
+                g = g.reset_index()
+            elif isinstance(g.index, pd.MultiIndex) and "symbol" in g.index.names:
+                g = g.reset_index()
+            elif g.index.name is None:
+                # Unnamed index - this is problematic; reset creates 'index' column
+                # We need to preserve whatever index we have
+                g = g.reset_index(drop=False)
+                if "symbol" not in g.columns and "index" in g.columns:
+                    # This shouldn't happen with group_keys=True, but be defensive
+                    raise ValueError("add_roll received group without 'symbol' column or named index")
+            else:
+                g = g.reset_index()
         g = g.sort_values("week_dt").copy()
         g["count_5d_dedup"] = g["total_clusters"]
         g["count_20d_dedup"] = g["total_clusters"].rolling(window=4, min_periods=1).sum()
         g["count_60d_dedup"] = g["total_clusters"].rolling(window=12, min_periods=1).sum()
+        
+        # Correctness check: ensure symbol is preserved (prevents regressions)
+        if "symbol" not in g.columns:
+            raise ValueError(f"add_roll dropped symbol. cols={list(g.columns)} index_names={g.index.names}")
+        
         return g
 
     weekly_counts = (
         weekly_counts
-        .groupby("symbol", group_keys=False, sort=False)
+        .groupby("symbol", group_keys=True, sort=False)
         .apply(add_roll)
     )
     
-    # Normalize index defensively (handles weird apply index behavior)
-    if isinstance(weekly_counts.index, pd.MultiIndex) and "symbol" in weekly_counts.index.names:
-        weekly_counts = weekly_counts.reset_index(level="symbol")
+    print("[DEBUG] post add_roll cols:", list(weekly_counts.columns), "index.names:", weekly_counts.index.names)
+    if "symbol" in weekly_counts.columns:
+        print("[DEBUG] head identifiers:", weekly_counts[["symbol"]].head())
     else:
-        weekly_counts = weekly_counts.reset_index(drop=True)
+        print("[DEBUG] head (no symbol column):", weekly_counts.head())
+    
+    # Normalize index defensively (handles weird apply index behavior)
+    # With group_keys=True, we get a MultiIndex with ('symbol', original_index)
+    if isinstance(weekly_counts.index, pd.MultiIndex):
+        if "symbol" in weekly_counts.index.names:
+            # Symbol is in the index; move it to column
+            weekly_counts = weekly_counts.reset_index(level="symbol")
+        # Reset remaining index levels
+        if isinstance(weekly_counts.index, pd.MultiIndex):
+            weekly_counts = weekly_counts.reset_index(drop=True)
+    else:
+        # Single level index
+        if weekly_counts.index.name == "symbol":
+            weekly_counts = weekly_counts.reset_index()
+        else:
+            weekly_counts = weekly_counts.reset_index(drop=True)
     
     # Now guarantee symbol is a column
     if "symbol" not in weekly_counts.columns:
