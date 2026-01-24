@@ -387,23 +387,15 @@ def build_news_feature_panel(
     print("[DEBUG] pre add_roll cols:", list(weekly_counts.columns), "index.names:", weekly_counts.index.names)
     
     def add_roll(g: pd.DataFrame) -> pd.DataFrame:
-        # Guarantee symbol is a column inside each group (not index)
-        # When group_keys=True, the groupby key becomes part of the index
+        # Use g.name to get the grouping key value (symbol)
+        # This is the authoritative source - don't rely on index manipulation
+        symbol_val = g.name
+        
+        # Ensure symbol exists as a column at function entry
         if "symbol" not in g.columns:
-            # Check if symbol is in the index
-            if g.index.name == "symbol":
-                g = g.reset_index()
-            elif isinstance(g.index, pd.MultiIndex) and "symbol" in g.index.names:
-                g = g.reset_index()
-            elif g.index.name is None:
-                # Unnamed index - this is problematic; reset creates 'index' column
-                # We need to preserve whatever index we have
-                g = g.reset_index(drop=False)
-                if "symbol" not in g.columns and "index" in g.columns:
-                    # This shouldn't happen with group_keys=True, but be defensive
-                    raise ValueError("add_roll received group without 'symbol' column or named index")
-            else:
-                g = g.reset_index()
+            g = g.copy()
+            g["symbol"] = symbol_val
+        
         g = g.sort_values("week_dt").copy()
         g["count_5d_dedup"] = g["total_clusters"]
         g["count_20d_dedup"] = g["total_clusters"].rolling(window=4, min_periods=1).sum()
@@ -417,8 +409,9 @@ def build_news_feature_panel(
 
     weekly_counts = (
         weekly_counts
-        .groupby("symbol", group_keys=True, sort=False)
+        .groupby("symbol", group_keys=False, sort=False)
         .apply(add_roll)
+        .reset_index(drop=True)
     )
     
     print("[DEBUG] post add_roll cols:", list(weekly_counts.columns), "index.names:", weekly_counts.index.names)
@@ -427,21 +420,12 @@ def build_news_feature_panel(
     else:
         print("[DEBUG] head (no symbol column):", weekly_counts.head())
     
-    # Normalize index defensively (handles weird apply index behavior)
-    # With group_keys=True, we get a MultiIndex with ('symbol', original_index)
-    if isinstance(weekly_counts.index, pd.MultiIndex):
-        if "symbol" in weekly_counts.index.names:
-            # Symbol is in the index; move it to column
-            weekly_counts = weekly_counts.reset_index(level="symbol")
-        # Reset remaining index levels
-        if isinstance(weekly_counts.index, pd.MultiIndex):
-            weekly_counts = weekly_counts.reset_index(drop=True)
-    else:
-        # Single level index
-        if weekly_counts.index.name == "symbol":
-            weekly_counts = weekly_counts.reset_index()
-        else:
-            weekly_counts = weekly_counts.reset_index(drop=True)
+    # Sanity check: ensure no "index" column was accidentally created
+    if "index" in weekly_counts.columns:
+        raise ValueError(
+            f"Unexpected 'index' column found after add_roll. This suggests unnamed index materialization. "
+            f"Columns: {weekly_counts.columns.tolist()}"
+        )
     
     # Now guarantee symbol is a column
     if "symbol" not in weekly_counts.columns:
