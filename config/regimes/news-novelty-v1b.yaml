@@ -1,0 +1,17 @@
+name: news-novelty-v1b
+skip_rules:
+  enabled: true
+  # looser thresholds
+  min_total_novelty: 0.35
+  min_high_severity_clusters: 1
+  max_price_action_share: 0.85
+
+scoring:
+  weights:
+    novelty: 0.20
+    severity: 0.25
+    sentiment: 0.10
+    divergence: 0.45
+
+evaluation:
+  mode: shadow

@@ -12,6 +12,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from src.io_atomic import write_parquet_atomic
+
 
 def fetch_candles(symbol: str, from_ts: int, to_ts: int, api_key: str, max_retries: int = 3) -> pd.DataFrame:
     """Fetch daily candles from Finnhub API with retry logic for 429 errors."""
@@ -130,16 +132,45 @@ def main(universe_path: str, week_end: str):
     # Sort by symbol and date
     combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
     
-    # Save to parquet
+    # Save to parquet (atomic write to prevent corruption)
     output_dir = Path("data/derived/market_daily")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "candles_daily.parquet"
     
-    combined.to_parquet(output_path, index=False)
+    write_parquet_atomic(combined, output_path)
     
     print(f"\n✅ Saved {len(combined):,} candle records to {output_path}")
     print(f"   Symbols: {combined['symbol'].nunique()}")
     print(f"   Date range: {combined['date'].min()} to {combined['date'].max()}")
+    
+    # Post-write verification (invariants check)
+    print("\n🔍 Verifying candle integrity...")
+    
+    # Check 1: No duplicates on (symbol, date)
+    dup_count = combined.duplicated(subset=["symbol", "date"]).sum()
+    if dup_count > 0:
+        raise RuntimeError(f"❌ Found {dup_count} duplicate (symbol, date) pairs!")
+    print("   ✓ No duplicates on (symbol, date)")
+    
+    # Check 2: No null OHLCV values
+    ohlcv_cols = ["open", "high", "low", "close", "volume"]
+    null_counts = combined[ohlcv_cols].isnull().sum()
+    if null_counts.any():
+        raise RuntimeError(f"❌ Null values found in OHLCV: {null_counts[null_counts > 0].to_dict()}")
+    print("   ✓ No null OHLCV values")
+    
+    # Check 3: Date range includes requested window
+    min_date = combined["date"].min()
+    max_date = combined["date"].max()
+    expected_min = pd.to_datetime(from_date)
+    expected_max = pd.to_datetime(to_date)
+    
+    if min_date > expected_min or max_date < expected_max:
+        print(f"   ⚠️  Date range warning: expected {expected_min} to {expected_max}, got {min_date} to {max_date}")
+    else:
+        print(f"   ✓ Date range covers requested window")
+    
+    print("✅ Candle integrity verified")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,18 @@
+schema_id: news-novelty-v1b
+
+skip_rules:
+  min_event_intensity: 0.35
+  max_price_action_recap_share: 0.85
+  min_high_severity_clusters: 1
+
+weights:
+  novelty: 0.20
+  event_intensity: 0.25
+  sentiment: 0.10
+  divergence: 0.45
+
+filters:
+  exclude_event_types: []  # More permissive
+  min_cluster_size: 1
+
+notes: "Divergence-heavy variant. Looser skip rules. Captures market dislocations and price/news divergence."

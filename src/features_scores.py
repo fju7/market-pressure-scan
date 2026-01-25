@@ -8,6 +8,7 @@ import json
 import math
 import os
 import platform
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +17,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from dateutil import tz
+
+# Regime system imports
+from src.derived_paths import DerivedPaths
+from src.scoring_schema import load_schema, write_schema_provenance
+from src.io_atomic import write_parquet_atomic
 
 # ----------------------------
 # Debug helpers
@@ -54,18 +60,26 @@ class Paths:
     market_daily_path: Path
     out_features_dir: Path
     out_scores_dir: Path
+    regime_id: str = "news-novelty-v1"  # For provenance tracking
 
-def default_paths() -> Paths:
+def default_paths(regime_id: str = "news-novelty-v1") -> Paths:
     root = Path(__file__).resolve().parents[1]
     derived = root / "data" / "derived"
+    
+    # DerivedPaths doesn't store regime, it takes it as method arg
+    # We'll construct regime-namespaced paths directly here
+    features_base = derived / "features_weekly" / f"regime={regime_id}"
+    scores_base = derived / "scores_weekly" / f"regime={regime_id}"
+    
     return Paths(
         root=root,
         derived=derived,
         news_clusters_dir=derived / "news_clusters",
         rep_enriched_dir=derived / "rep_enriched",
         market_daily_path=derived / "market_daily" / "candles_daily.parquet",
-        out_features_dir=derived / "features_weekly",
-        out_scores_dir=derived / "scores_weekly",
+        out_features_dir=features_base,
+        out_scores_dir=scores_base,
+        regime_id=regime_id,
     )
 
 # ----------------------------
@@ -897,8 +911,20 @@ def run(
     universe_csv: Path,
     week_end: str,
     lookback_weeks: int = 12,
+    regime_id: str = "news-novelty-v1",
+    schema_id: Optional[str] = None,
 ):
-    paths = default_paths()
+    # Schema ID defaults to regime ID if not provided
+    if schema_id is None:
+        schema_id = regime_id
+    
+    # Load scoring schema
+    schema = load_schema(schema_id)
+    print(f"📋 Using schema: {schema.schema_id} (hash: {schema.content_hash})")
+    print(f"   Weights: {schema.get_weights()}")
+    print(f"   Skip rules: {schema.get_skip_rules()}")
+    
+    paths = default_paths(regime_id=regime_id)
     week_end_et = parse_week_end(week_end)
 
     universe = load_universe(universe_csv)
@@ -975,7 +1001,7 @@ def run(
     
     print("="*60 + "\n")
 
-    # Write outputs
+    # Write outputs with regime-namespaced paths
     out_feat_dir = paths.out_features_dir / f"week_ending={week_end}"
     out_score_dir = paths.out_scores_dir / f"week_ending={week_end}"
     out_feat_dir.mkdir(parents=True, exist_ok=True)
@@ -983,18 +1009,53 @@ def run(
 
     feat_path = out_feat_dir / "features_weekly.parquet"
     score_path = out_score_dir / "scores_weekly.parquet"
-    features.to_parquet(feat_path, index=False)
-    scores.to_parquet(score_path, index=False)
+    
+    # Use atomic writes to prevent corruption
+    write_parquet_atomic(features, feat_path)
+    write_parquet_atomic(scores, score_path)
 
     print(f"Wrote: {feat_path}")
     print(f"Wrote: {score_path}")
     print(f"Rows: features={len(features):,}, scores={len(scores):,}")
+    
+    # Write schema provenance
+    schema_prov_path = write_schema_provenance(schema, out_score_dir)
+    print(f"Wrote schema provenance: {schema_prov_path}")
+    
+    # Write report_meta.json with full provenance
+    try:
+        git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=paths.root, text=True).strip()
+    except Exception:
+        git_sha = "unknown"
+    
+    report_meta = {
+        "week_end": week_end,
+        "regime_id": regime_id,
+        "schema_id": schema.schema_id,
+        "schema_hash": schema.content_hash,
+        "git_sha": git_sha,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "n_features": len(features),
+        "n_scores": len(scores),
+    }
+    
+    meta_path = out_score_dir / "report_meta.json"
+    meta_path.write_text(json.dumps(report_meta, indent=2))
+    print(f"Wrote provenance: {meta_path}")
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--universe", required=True, help="Path to sp500_universe.csv")
     p.add_argument("--week_end", required=True, help="Week ending Friday (ET) YYYY-MM-DD")
     p.add_argument("--lookback_weeks", default=12, type=int, help="History window in weeks for NV/NA and baselines")
+    p.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    p.add_argument("--schema", default=None, help="Schema ID (defaults to regime ID if not specified)")
     args = p.parse_args()
 
-    run(Path(args.universe), args.week_end, lookback_weeks=args.lookback_weeks)
+    run(
+        Path(args.universe),
+        args.week_end,
+        lookback_weeks=args.lookback_weeks,
+        regime_id=args.regime,
+        schema_id=args.schema,
+    )
