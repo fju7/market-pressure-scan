@@ -1,0 +1,12 @@
+week_ending_date,2026-01-02
+generated_utc,2026-01-25T02:58:15.842833Z
+is_low_information_week,True
+recap_pct,48.04123711340206
+avg_novelty_z,0.0
+avg_event_intensity_z,-1.1354033406475827e-16
+cluster_count,485
+low_info_reasons,novelty and event intensity are near zero on average
+
+BASKET
+week_ending_date,action,reason
+2026-01-02,SKIP,novelty and event intensity are near zero on average

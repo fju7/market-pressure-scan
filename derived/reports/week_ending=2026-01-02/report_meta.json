@@ -1,0 +1,36 @@
+{
+  "week_ending_date": "2026-01-02",
+  "is_low_information_week": true,
+  "low_info_reasons": [
+    "novelty and event intensity are near zero on average"
+  ],
+  "recap_pct": 48.04123711340206,
+  "avg_novelty_z": 0.0,
+  "avg_event_intensity_z": -1.1354033406475827e-16,
+  "cluster_count": 485,
+  "config_snapshot": {
+    "experiment_name": "news-novelty-v1",
+    "experiment_version": "1.0.0",
+    "max_clusters_per_symbol": 1,
+    "recap_pct_threshold": 0.5,
+    "min_clusters_threshold": 10,
+    "basket_size": 20,
+    "basket_weighting": "equal_weight",
+    "sector_cap": null,
+    "skip_rules_enabled": true,
+    "entry_timing": "Monday open",
+    "exit_timing": "Friday close",
+    "benchmark": "SPY",
+    "neutralize_recap": true,
+    "exclude_spy": true
+  },
+  "build": {
+    "git_sha": "35a2e8109c89486e60d6b87bffd8d743253e3825",
+    "github_run_id": "21325299410",
+    "github_run_attempt": "1",
+    "python": "3.11.14",
+    "pandas": "3.0.0",
+    "numpy": "2.4.1",
+    "features_scores_sha256": "94ef473c1774125743a1a8c1b0f42137835c185f85ee50fd89eee9807d686c26"
+  }
+}

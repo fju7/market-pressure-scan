@@ -1,0 +1,27 @@
+{
+  "week_ending_date": "2026-01-23",
+  "is_low_information_week": true,
+  "low_info_reasons": [
+    "novelty and event intensity are near zero on average"
+  ],
+  "recap_pct": 52.610441767068274,
+  "avg_novelty_z": 0.0,
+  "avg_event_intensity_z": 3.3886325249603174e-17,
+  "cluster_count": 498,
+  "config_snapshot": {
+    "experiment_name": "news-novelty-v1",
+    "experiment_version": "1.0.0",
+    "max_clusters_per_symbol": 1,
+    "recap_pct_threshold": 0.5,
+    "min_clusters_threshold": 10,
+    "basket_size": 20,
+    "basket_weighting": "equal_weight",
+    "sector_cap": null,
+    "skip_rules_enabled": true,
+    "entry_timing": "Monday open",
+    "exit_timing": "Friday close",
+    "benchmark": "SPY",
+    "neutralize_recap": true,
+    "exclude_spy": true
+  }
+}

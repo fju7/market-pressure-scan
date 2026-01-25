@@ -44,15 +44,38 @@ def default_paths() -> Paths:
         reports_dir=derived / "reports",
     )
 
-def load_week(paths: Paths, week_end: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    scores_p = paths.scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
-    feats_p  = paths.features_dir / f"week_ending={week_end}" / "features_weekly.parquet"
+def load_week(paths: Paths, week_end: str, regime: str = "news-novelty-v1") -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    # Try regime-specific path first (new format)
+    scores_p = paths.scores_dir / f"regime={regime}" / f"week_ending={week_end}" / "scores_weekly.parquet"
+    feats_p  = paths.features_dir / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet"
+    
+    # Fall back to legacy non-regime path if regime path doesn't exist
+    if not scores_p.exists():
+        scores_p_legacy = paths.scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
+        if scores_p_legacy.exists():
+            scores_p = scores_p_legacy
+    
+    if not feats_p.exists():
+        feats_p_legacy = paths.features_dir / f"week_ending={week_end}" / "features_weekly.parquet"
+        if feats_p_legacy.exists():
+            feats_p = feats_p_legacy
+    
     clus_p   = paths.clusters_dir / f"week_ending={week_end}" / "clusters.parquet"
     enr_p    = paths.enriched_dir / f"week_ending={week_end}" / "rep_enriched.parquet"
 
+    # Validate all required files exist with clear error messages
+    missing_files = []
     for p in [scores_p, feats_p, clus_p, enr_p]:
         if not p.exists():
-            raise FileNotFoundError(f"Missing required file: {p}")
+            missing_files.append(str(p))
+    
+    if missing_files:
+        error_msg = f"Missing required files for week {week_end}:"
+        for f in missing_files:
+            error_msg += f"\n  - {f}"
+        error_msg += "\n\nThis may indicate incomplete data (e.g., legacy weeks missing clusters/enriched data)."
+        error_msg += "\nEither complete the pipeline for this week or exclude it from processing."
+        raise FileNotFoundError(error_msg)
 
     scores = pd.read_parquet(scores_p)
     feats = pd.read_parquet(feats_p)
@@ -509,9 +532,9 @@ def build_report_markdown(
     return "\n".join(summary_lines), meta
 
 
-def run(week_end: str, top_n: int = 20, bottom_n: int = 20) -> Path:
+def run(week_end: str, regime: str = "news-novelty-v1", top_n: int = 20, bottom_n: int = 20) -> Path:
     paths = default_paths()
-    scores, feats, clusters, enriched = load_week(paths, week_end)
+    scores, feats, clusters, enriched = load_week(paths, week_end, regime)
 
     md, meta = build_report_markdown(
         week_end=week_end,
@@ -540,8 +563,9 @@ def run(week_end: str, top_n: int = 20, bottom_n: int = 20) -> Path:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--week_end", required=True, help="Week ending Friday (ET) YYYY-MM-DD")
+    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
     ap.add_argument("--top_n", type=int, default=20)
     ap.add_argument("--bottom_n", type=int, default=20)
     args = ap.parse_args()
 
-    run(args.week_end, top_n=args.top_n, bottom_n=args.bottom_n)
+    run(args.week_end, regime=args.regime, top_n=args.top_n, bottom_n=args.bottom_n)

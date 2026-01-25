@@ -44,12 +44,16 @@ def analyze_performance(min_weeks: int = 1) -> None:
     total_weeks = len(weeks)
     trade_weeks = len(weeks[weeks["action"] == "TRADE"])
     skip_weeks = len(weeks[weeks["action"] == "SKIP"])
-    skip_rate = (skip_weeks / total_weeks * 100) if total_weeks > 0 else 0
+    error_weeks = len(weeks[weeks["action"] == "ERROR"])
+    valid_weeks = total_weeks - error_weeks
+    skip_rate = (skip_weeks / valid_weeks * 100) if valid_weeks > 0 else 0
     
     print(f"\n📅 WEEKS SUMMARY")
     print(f"   Total weeks tracked: {total_weeks}")
     print(f"   TRADE weeks: {trade_weeks}")
     print(f"   SKIP weeks: {skip_weeks}")
+    if error_weeks > 0:
+        print(f"   ERROR weeks: {error_weeks} (excluded from skip rate)")
     print(f"   Skip rate: {skip_rate:.1f}%")
     
     if total_weeks < min_weeks:

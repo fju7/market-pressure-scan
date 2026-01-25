@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 import pandas as pd
+from datetime import datetime
 
 from . import config
 
@@ -10,6 +11,71 @@ from . import config
 def sh(cmd):
     print("\n▶ Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
+
+
+def log_error_week(week_end: str, error_type: str, regime: str, scores_path: Path, exception: Exception):
+    """
+    Log an error week to weeks_log.csv to prevent silent week loss.
+    
+    This is a fallback logger for when scores exist but downstream steps fail.
+    
+    Parameters
+    ----------
+    week_end : str
+        Week ending date
+    error_type : str
+        Error classification (e.g., ERROR_POST_SCORES)
+    regime : str
+        Regime ID that was being processed
+    scores_path : Path
+        Path to the scores file that exists
+    exception : Exception
+        The exception that was caught
+    """
+    log_path = Path("data/live/weeks_log.csv")
+    
+    # Extract concise error info
+    error_class = type(exception).__name__
+    error_msg = str(exception).split('\n')[0][:100]  # First line, truncated
+    
+    # Build structured error reason
+    error_reason = (
+        f"{error_type} | "
+        f"regime={regime} | "
+        f"scores={scores_path} | "
+        f"{error_class}: {error_msg}"
+    )
+    
+    # Prepare error row
+    error_row = {
+        "week_ending_date": week_end,
+        "action": "ERROR",
+        "basket_size": 0,
+        "overlap_pct": 0.0,
+        "turnover_pct": 0.0,
+        "num_clusters": 0,
+        "avg_novelty_z": 0.0,
+        "avg_event_intensity_z": 0.0,
+        "recap_pct": 0.0,
+        "is_low_info": "",
+        "num_positions": 0,
+        "logged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "skip_reason": error_reason[:500],  # Truncate to prevent CSV issues
+    }
+    
+    # Append to weeks_log
+    if log_path.exists():
+        df = pd.read_csv(log_path)
+        # Don't duplicate if already logged
+        if week_end not in df["week_ending_date"].values:
+            df = pd.concat([df, pd.DataFrame([error_row])], ignore_index=True)
+            df.to_csv(log_path, index=False)
+            print(f"✓ Logged error week to {log_path}")
+    else:
+        # Create new log file
+        df = pd.DataFrame([error_row])
+        df.to_csv(log_path, index=False)
+        print(f"✓ Created {log_path} with error week")
 
 
 def main():
@@ -104,16 +170,32 @@ def main():
         "--regime", args.regime
     ])
 
-    # 6) Weekly report
-    sh([
-        py, "-m", "src.report_weekly",
-        "--week_end", args.week_end
-    ])
+    # 6) Weekly report (with error fallback)
+    try:
+        sh([
+            py, "-m", "src.report_weekly",
+            "--week_end", args.week_end,
+            "--regime", args.regime
+        ])
+    except subprocess.CalledProcessError as e:
+        # If scores exist but report fails, log it to prevent silent week loss
+        scores_path = Path(f"data/derived/scores_weekly/regime={args.regime}/week_ending={args.week_end}/scores_weekly.parquet")
+        if scores_path.exists():
+            print(f"⚠️  WARNING: Scores exist but report_weekly failed. Logging ERROR_POST_SCORES to weeks_log.")
+            log_error_week(
+                week_end=args.week_end,
+                error_type="ERROR_POST_SCORES",
+                regime=args.regime,
+                scores_path=scores_path,
+                exception=e
+            )
+        raise  # Re-raise to still fail the pipeline
 
     # 7) Export basket
     sh([
         py, "-m", "src.export_basket",
         "--week_end", args.week_end,
+        "--regime", args.regime,
         "--skip_low_info"
         # top_n now comes from CONFIG.yaml
     ])
@@ -121,7 +203,8 @@ def main():
     # 8) Trader sheet
     sh([
         py, "-m", "src.trader_sheet",
-        "--week_end", args.week_end
+        "--week_end", args.week_end,
+        "--regime", args.regime
     ])
 
     # 9) Log week decision

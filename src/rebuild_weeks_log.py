@@ -86,6 +86,9 @@ def compute_week_row(week_end: str, all_weeks: list[str]) -> dict:
     skip_reason = ""
     if action == "SKIP":
         skip_reason = basket["reason"].iloc[0] if "reason" in basket.columns else ""
+    elif action == "ERROR":
+        # Preserve ERROR actions from weeks_log (they won't have baskets)
+        skip_reason = basket["reason"].iloc[0] if "reason" in basket.columns else "Pipeline error"
     
     # Use deterministic timestamp for idempotent rebuilds
     # This ensures the same input always produces the same output
@@ -172,6 +175,8 @@ def rebuild_weeks_log():
     print(f"   Date range: {df['week_ending_date'].min()} to {df['week_ending_date'].max()}")
     print(f"   TRADE weeks: {(df['action'] == 'TRADE').sum()}")
     print(f"   SKIP weeks: {(df['action'] == 'SKIP').sum()}")
+    if (df['action'] == 'ERROR').any():
+        print(f"   ERROR weeks: {(df['action'] == 'ERROR').sum()}")
     
     # Summary stats
     if (df["action"] == "TRADE").any():

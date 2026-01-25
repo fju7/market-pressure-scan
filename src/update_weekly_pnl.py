@@ -11,6 +11,9 @@ For TRADE weeks:
 
 For SKIP weeks:
 - Appends SKIP row with zeros and skip reason
+
+For ERROR weeks:
+- Appends ERROR row with zeros and error reason
 """
 
 from __future__ import annotations
@@ -225,6 +228,28 @@ def update_weekly_pnl(week_end: str) -> None:
         pnl_df = pd.concat([pnl_df, pd.DataFrame([skip_row])], ignore_index=True)
         pnl_df.to_csv(pnl_path, index=False)
         print(f"✓ Week {week_end}: SKIP logged (reason: {skip_reason})")
+        return
+    
+    if action == "ERROR":
+        # Log ERROR week (pipeline failure)
+        error_reason = basket["notes"].iloc[0] if "notes" in basket.columns else "Pipeline error"
+        error_row = {
+            "week_ending_date": week_end,
+            "symbol": "ERROR",
+            "entry_price": 0.0,
+            "exit_price": 0.0,
+            "return_pct": 0.0,
+            "benchmark_return_pct": 0.0,
+            "active_return_pct": 0.0,
+            "drivers": None,
+            "event_type_primary": None,
+            "conviction": None,
+            "signal_state": None,
+            "notes": error_reason
+        }
+        pnl_df = pd.concat([pnl_df, pd.DataFrame([error_row])], ignore_index=True)
+        pnl_df.to_csv(pnl_path, index=False)
+        print(f"⚠️ Week {week_end}: ERROR logged (reason: {error_reason})")
         return
     
     # TRADE week - calculate P&L
