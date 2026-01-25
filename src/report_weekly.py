@@ -447,6 +447,9 @@ def build_report_markdown(
     git_sha = os.getenv("GIT_SHA", "")
     github_run_id = os.getenv("RUN_ID", "")
     github_run_attempt = os.getenv("RUN_ATTEMPT", "")
+    run_trigger = os.getenv("RUN_TRIGGER", "")  # workflow_dispatch or schedule
+    week_end_requested = os.getenv("WEEK_END_REQUESTED", "")  # User input (or empty for scheduled)
+    run_started_utc = os.getenv("RUN_STARTED_UTC", "")
     python_ver = platform.python_version()
     pandas_ver = pd.__version__
     numpy_ver = np.__version__
@@ -485,6 +488,13 @@ def build_report_markdown(
         "avg_event_intensity_z": float(avg_evs) if np.isfinite(avg_evs) else None,
         "cluster_count": int(len(enriched)),
         "config_snapshot": config.get_config_snapshot(),  # Lock experiment protocol
+        "run_metadata": {
+            "run_trigger": run_trigger,  # "workflow_dispatch" or "schedule"
+            "week_end_requested": week_end_requested if week_end_requested else None,  # User input or null
+            "week_end_resolved": week_end,  # Actual week computed
+            "run_started_utc": run_started_utc,
+            "git_sha": git_sha,
+        },
         "build": {
             "git_sha": git_sha,
             "github_run_id": github_run_id,

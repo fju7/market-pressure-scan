@@ -21,6 +21,21 @@ def main():
     ap.add_argument("--skip_backtest", action="store_true")
     args = ap.parse_args()
 
+    # CRITICAL: Validate against week_end.txt (single source of truth)
+    week_end_file = Path("week_end.txt")
+    if week_end_file.exists():
+        week_end_from_file = week_end_file.read_text().strip()
+        if week_end_from_file != args.week_end:
+            print(f"❌ CRITICAL ERROR: week_end mismatch!")
+            print(f"   week_end.txt:   {week_end_from_file}")
+            print(f"   --week_end arg: {args.week_end}")
+            print(f"   These must match to prevent artifact contamination.")
+            sys.exit(1)
+        print(f"✓ week_end validation passed: {args.week_end}")
+    else:
+        print(f"⚠️  Warning: week_end.txt not found (local run?)")
+        print(f"   Proceeding with --week_end={args.week_end}")
+
     # Validate config
     config.validate_config()
     

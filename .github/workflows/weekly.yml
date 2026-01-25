@@ -63,6 +63,9 @@ jobs:
           echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
           echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_ENV
           echo "RUN_ATTEMPT=${{ github.run_attempt }}" >> $GITHUB_ENV
+          echo "RUN_TRIGGER=${{ github.event_name }}" >> $GITHUB_ENV
+          echo "WEEK_END_REQUESTED=${{ github.event.inputs.week_end }}" >> $GITHUB_ENV
+          echo "RUN_STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
       - name: Verify required secrets present
         env:
@@ -134,6 +137,11 @@ jobs:
           python -m src.scoreboard
           python -m src.trader_sheet --week_end "$WEEK_END"
           python -m src.log_week_decision --week_end "$WEEK_END"
+
+      - name: Post-run artifact audit
+        run: |
+          WEEK_END="${{ steps.week_end.outputs.week_end }}"
+          python scripts/audit_artifacts.py --week_end "$WEEK_END"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
