@@ -143,15 +143,22 @@ jobs:
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
           python scripts/audit_artifacts.py --week_end "$WEEK_END"
 
-      - name: Upload artifacts
+      - name: Upload week artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trader-sheet-and-report
+          name: week_${{ steps.week_end.outputs.week_end }}_run_${{ github.run_id }}
           path: |
-            data/derived/trader_sheets/**
-            data/derived/reports/**
-            data/derived/baskets/**
+            week_end.txt
+            data/derived/baskets/week_ending=${{ steps.week_end.outputs.week_end }}/basket.csv
+            data/derived/reports/week_ending=${{ steps.week_end.outputs.week_end }}/weekly_report.md
+            data/derived/reports/week_ending=${{ steps.week_end.outputs.week_end }}/report_meta.json
+            data/derived/trader_sheets/week_ending=${{ steps.week_end.outputs.week_end }}/trader_sheet.pdf
+            data/derived/trader_sheets/week_ending=${{ steps.week_end.outputs.week_end }}/trader_sheet.csv
+            data/derived/scores_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/scores_weekly.parquet
+            data/derived/features_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/features_weekly.parquet
             data/live/scoreboard.csv
+            data/live/weeks_log.csv
 
       - name: Create notification issue
         if: always()
