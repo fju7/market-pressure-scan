@@ -87,6 +87,10 @@ def compute_week_row(week_end: str, all_weeks: list[str]) -> dict:
     if action == "SKIP":
         skip_reason = basket["reason"].iloc[0] if "reason" in basket.columns else ""
     
+    # Use deterministic timestamp for idempotent rebuilds
+    # This ensures the same input always produces the same output
+    logged_at = f"{week_end} 00:00:00"
+    
     return {
         "week_ending_date": week_end,
         "action": action,
@@ -99,7 +103,7 @@ def compute_week_row(week_end: str, all_weeks: list[str]) -> dict:
         "recap_pct": meta.get("recap_pct", 0.0),
         "is_low_info": meta.get("is_low_information_week", False),
         "num_positions": len(basket) if action == "TRADE" else 0,
-        "logged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "logged_at": logged_at,
         "skip_reason": clean_text(skip_reason),
     }
 
