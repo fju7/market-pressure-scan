@@ -9,6 +9,10 @@ on:
         description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
         required: false
         default: ""
+      regime:
+        description: "Regime ID (e.g., news-novelty-v1, news-novelty-v1b)"
+        required: false
+        default: "news-novelty-v1"
 
 concurrency:
   group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
@@ -132,7 +136,8 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
-          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --max_clusters_per_symbol 1 --skip_backtest
+          REGIME="${{ github.event.inputs.regime || 'news-novelty-v1' }}"
+          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --regime "$REGIME" --max_clusters_per_symbol 1 --skip_backtest
           python -m src.update_weekly_pnl --week_end "$WEEK_END"
           python -m src.scoreboard
           python -m src.trader_sheet --week_end "$WEEK_END"
@@ -150,15 +155,15 @@ jobs:
           name: week_${{ steps.week_end.outputs.week_end }}_run_${{ github.run_id }}
           path: |
             week_end.txt
-            data/derived/baskets/week_ending=${{ steps.week_end.outputs.week_end }}/basket.csv
-            data/derived/reports/week_ending=${{ steps.week_end.outputs.week_end }}/weekly_report.md
-            data/derived/reports/week_ending=${{ steps.week_end.outputs.week_end }}/report_meta.json
-            data/derived/trader_sheets/week_ending=${{ steps.week_end.outputs.week_end }}/trader_sheet.pdf
-            data/derived/trader_sheets/week_ending=${{ steps.week_end.outputs.week_end }}/trader_sheet.csv
-            data/derived/scores_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/scores_weekly.parquet
-            data/derived/features_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/features_weekly.parquet
-            data/live/scoreboard.csv
-            data/live/weeks_log.csv
+            data/live/
+            data/derived/baskets/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/reports/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/trader_sheets/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/scores_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/scores_weekly/regime=*/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/scores_weekly/schema=*/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/features_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/features_weekly/regime=*/week_ending=${{ steps.week_end.outputs.week_end }}/
 
       - name: Create notification issue
         if: always()

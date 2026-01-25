@@ -16,6 +16,7 @@ def main():
     ap = argparse.ArgumentParser("Run full weekly market pressure pipeline")
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
     ap.add_argument("--universe", default="sp500_universe.csv")
+    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
     ap.add_argument("--max_clusters_per_symbol", type=int, default=None, 
                     help="Max clusters per symbol (default: from CONFIG.yaml)")
     ap.add_argument("--skip_backtest", action="store_true")
@@ -61,6 +62,7 @@ def main():
     max_clusters = args.max_clusters_per_symbol if args.max_clusters_per_symbol is not None else config.get_max_clusters_per_symbol()
     
     print(f"\n🔒 Experiment: {config.get_experiment_name()} v{config.get_experiment_version()}")
+    print(f"   Regime: {args.regime}")
     print(f"   Max clusters/symbol: {max_clusters}")
     print(f"   Basket size: {config.get_basket_size()}")
     print(f"   Skip rules: {'ENABLED' if config.get_skip_rules_enabled() else 'DISABLED'}\n")
@@ -98,7 +100,8 @@ def main():
     sh([
         py, "-m", "src.features_scores",
         "--universe", args.universe,
-        "--week_end", args.week_end
+        "--week_end", args.week_end,
+        "--regime", args.regime
     ])
 
     # 6) Weekly report
