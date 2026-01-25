@@ -71,9 +71,9 @@ def get_price_from_candles(symbol: str, date: str, price_type: str = "open") -> 
         return None
     
     if price_type == "open":
-        return df["o"].iloc[0]
+        return df["open"].iloc[0]
     elif price_type == "close":
-        return df["c"].iloc[0]
+        return df["close"].iloc[0]
     else:
         return None
 

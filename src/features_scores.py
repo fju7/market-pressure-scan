@@ -203,8 +203,8 @@ def market_features_for_week(
         gg = g[g["date"] <= end_date].sort_values("date")
         if len(gg) < lookback + 1:
             return None
-        c_end = float(gg["c"].iloc[-1])
-        c_start = float(gg["c"].iloc[-(lookback + 1)])
+        c_end = float(gg["close"].iloc[-1])
+        c_start = float(gg["close"].iloc[-(lookback + 1)])
         if c_start <= 0:
             return None
         return c_end / c_start - 1.0
@@ -214,14 +214,14 @@ def market_features_for_week(
         gg = g[g["date"] <= end_date].sort_values("date")
         if len(gg) < lookback:
             return None
-        return float(np.nanmean(gg["v"].iloc[-lookback:].astype(float).to_numpy()))
+        return float(np.nanmean(gg["volume"].iloc[-lookback:].astype(float).to_numpy()))
 
     # Helper vol (std of daily close returns) over lookback
     def realized_vol(g: pd.DataFrame, end_date: datetime.date, lookback: int) -> Optional[float]:
         gg = g[g["date"] <= end_date].sort_values("date")
         if len(gg) < lookback + 1:
             return None
-        c = gg["c"].astype(float).to_numpy()
+        c = gg["close"].astype(float).to_numpy()
         rets = np.diff(c[-(lookback + 1):]) / (c[-(lookback + 1):-1] + 1e-12)
         if rets.size < 2:
             return None

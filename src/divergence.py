@@ -11,7 +11,7 @@ def compute_5d_returns(candles: pd.DataFrame, week_end: str) -> pd.DataFrame:
     Compute 5-trading-day returns ending at week_end.
     
     Args:
-        candles: DataFrame with columns: symbol, date, c (close price)
+        candles: DataFrame with columns: symbol, date, close (close price)
         week_end: YYYY-MM-DD string
         
     Returns:
@@ -25,8 +25,8 @@ def compute_5d_returns(candles: pd.DataFrame, week_end: str) -> pd.DataFrame:
     we = pd.to_datetime(week_end)
     window = c[c["date"] <= we].groupby("symbol").tail(6)  # 6 points -> 5d return
     window = window.groupby("symbol").agg(
-        start_close=("c", "first"),
-        end_close=("c", "last"),
+        start_close=("close", "first"),
+        end_close=("close", "last"),
     ).reset_index()
 
     window["ret_5d"] = (window["end_close"] / window["start_close"]) - 1.0

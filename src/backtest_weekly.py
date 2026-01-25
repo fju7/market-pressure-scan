@@ -114,8 +114,8 @@ def compute_symbol_return_mon_open_fri_close(
     row_entry = g[g["date"] == entry_day].iloc[0]
     row_exit = g[g["date"] == exit_day].iloc[0]
 
-    o = float(row_entry["o"])
-    c = float(row_exit["c"])
+    o = float(row_entry["open"])
+    c = float(row_exit["close"])
     if o <= 0:
         return None
     return c / o - 1.0

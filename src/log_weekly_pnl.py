@@ -34,6 +34,7 @@ def fetch_quote(symbol: str, api_key: str) -> dict | None:
     -------
     dict or None
         Quote data with keys: c (current), o (open), h (high), l (low), pc (prev close), t (timestamp)
+        Note: Finnhub API returns short keys; these are used as-is for real-time quotes
     """
     url = "https://finnhub.io/api/v1/quote"
     params = {"symbol": symbol, "token": api_key}
@@ -43,6 +44,7 @@ def fetch_quote(symbol: str, api_key: str) -> dict | None:
         resp.raise_for_status()
         data = resp.json()
         
+        # Finnhub quote API uses short keys (c, o, h, l, pc, t)
         if data.get("c") and data["c"] > 0:
             return data
         else:
