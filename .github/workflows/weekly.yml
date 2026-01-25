@@ -143,6 +143,10 @@ jobs:
           python -m src.trader_sheet --week_end "$WEEK_END"
           python -m src.log_week_decision --week_end "$WEEK_END"
 
+      - name: Rebuild weeks log (full)
+        run: |
+          python -m src.rebuild_weeks_log
+
       - name: Post-run artifact audit
         run: |
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
