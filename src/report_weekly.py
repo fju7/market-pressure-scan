@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import platform
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -440,6 +443,38 @@ def build_report_markdown(
     summary_lines.append("- A substitute for portfolio-level risk management")
     summary_lines.append("")
 
+    # Build stamp section (collect first to add to both markdown and metadata)
+    git_sha = os.getenv("GIT_SHA", "")
+    github_run_id = os.getenv("RUN_ID", "")
+    github_run_attempt = os.getenv("RUN_ATTEMPT", "")
+    python_ver = platform.python_version()
+    pandas_ver = pd.__version__
+    numpy_ver = np.__version__
+    
+    # Calculate features_scores.py hash
+    features_scores_sha256 = ""
+    try:
+        features_scores_path = Path(__file__).parent / "features_scores.py"
+        if features_scores_path.exists():
+            features_scores_sha256 = hashlib.sha256(features_scores_path.read_bytes()).hexdigest()
+    except Exception:
+        pass  # Non-critical, skip if error
+
+    # Add build stamp to markdown
+    summary_lines.append("## Build Stamp")
+    summary_lines.append("")
+    summary_lines.append("For full traceability and reproducibility:")
+    summary_lines.append("")
+    if git_sha:
+        summary_lines.append(f"- **Git SHA:** `{git_sha[:12]}...` (full: `{git_sha}`)")
+    if github_run_id:
+        summary_lines.append(f"- **GitHub Run:** `{github_run_id}` (attempt {github_run_attempt})")
+    if features_scores_sha256:
+        summary_lines.append(f"- **features_scores.py SHA256:** `{features_scores_sha256[:16]}...`")
+    summary_lines.append(f"- **Python:** {python_ver}")
+    summary_lines.append(f"- **Dependencies:** pandas {pandas_ver}, numpy {numpy_ver}")
+    summary_lines.append("")
+
     # Prepare metadata
     meta = {
         "week_ending_date": week_end,
@@ -450,6 +485,15 @@ def build_report_markdown(
         "avg_event_intensity_z": float(avg_evs) if np.isfinite(avg_evs) else None,
         "cluster_count": int(len(enriched)),
         "config_snapshot": config.get_config_snapshot(),  # Lock experiment protocol
+        "build": {
+            "git_sha": git_sha,
+            "github_run_id": github_run_id,
+            "github_run_attempt": github_run_attempt,
+            "python": python_ver,
+            "pandas": pandas_ver,
+            "numpy": numpy_ver,
+            "features_scores_sha256": features_scores_sha256,
+        }
     }
 
     return "\n".join(summary_lines), meta

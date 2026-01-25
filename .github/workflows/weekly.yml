@@ -58,6 +58,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Build stamp
+        run: |
+          echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_ENV
+          echo "RUN_ATTEMPT=${{ github.run_attempt }}" >> $GITHUB_ENV
+
       - name: Verify required secrets present
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}

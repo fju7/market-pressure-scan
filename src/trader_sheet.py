@@ -194,6 +194,39 @@ def write_pdf(out_pdf: Path, week_end: str, meta: dict, basket_df: pd.DataFrame)
     draw_line(y)
     y -= 18
 
+    # Build stamp (traceability)
+    build_info = meta.get("build", {})
+    if build_info:
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(left, y, "Build Stamp")
+        y -= 16
+        c.setFont("Helvetica", 8)
+        
+        git_sha = build_info.get("git_sha", "")
+        run_id = build_info.get("github_run_id", "")
+        run_attempt = build_info.get("github_run_attempt", "")
+        fs_hash = build_info.get("features_scores_sha256", "")
+        
+        if git_sha:
+            c.drawString(left, y, f"Git SHA: {git_sha[:12]}...")
+            y -= 10
+        if run_id:
+            c.drawString(left, y, f"GitHub Run: {run_id} (attempt {run_attempt})")
+            y -= 10
+        if fs_hash:
+            c.drawString(left, y, f"features_scores.py: {fs_hash[:16]}...")
+            y -= 10
+        
+        python_ver = build_info.get("python", "")
+        pandas_ver = build_info.get("pandas", "")
+        if python_ver:
+            c.drawString(left, y, f"Python {python_ver} · pandas {pandas_ver}")
+            y -= 10
+        
+        y -= 8
+        draw_line(y)
+        y -= 18
+
     # Ledger pointers (always)
     c.setFont("Helvetica-Bold", 11)
     c.drawString(left, y, "Ledger Pointers (what to update)")
