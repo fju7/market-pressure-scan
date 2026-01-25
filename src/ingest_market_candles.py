@@ -126,24 +126,17 @@ def main(universe_path: str, week_end: str):
     # Combine all data
     combined = pd.concat(all_candles, ignore_index=True)
     
+    # Normalize Finnhub OHLCV column names to canonical names
+    rename_map = {"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+    combined = combined.rename(columns=rename_map)
+    
     # Ensure date is datetime for parquet
     combined["date"] = pd.to_datetime(combined["date"])
     
     # Sort by symbol and date
     combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
     
-    # Save to parquet (atomic write to prevent corruption)
-    output_dir = Path("data/derived/market_daily")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "candles_daily.parquet"
-    
-    write_parquet_atomic(combined, output_path)
-    
-    print(f"\n✅ Saved {len(combined):,} candle records to {output_path}")
-    print(f"   Symbols: {combined['symbol'].nunique()}")
-    print(f"   Date range: {combined['date'].min()} to {combined['date'].max()}")
-    
-    # Post-write verification (invariants check)
+    # Pre-write verification (invariants check)
     print("\n🔍 Verifying candle integrity...")
     
     # Check 1: No duplicates on (symbol, date)
@@ -154,6 +147,9 @@ def main(universe_path: str, week_end: str):
     
     # Check 2: No null OHLCV values
     ohlcv_cols = ["open", "high", "low", "close", "volume"]
+    if not set(ohlcv_cols).issubset(combined.columns):
+        raise RuntimeError(f"❌ Missing OHLCV columns. Expected {ohlcv_cols}, found: {list(combined.columns)}")
+    
     null_counts = combined[ohlcv_cols].isnull().sum()
     if null_counts.any():
         raise RuntimeError(f"❌ Null values found in OHLCV: {null_counts[null_counts > 0].to_dict()}")
@@ -171,6 +167,17 @@ def main(universe_path: str, week_end: str):
         print(f"   ✓ Date range covers requested window")
     
     print("✅ Candle integrity verified")
+    
+    # Save to parquet (atomic write to prevent corruption)
+    output_dir = Path("data/derived/market_daily")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "candles_daily.parquet"
+    
+    write_parquet_atomic(combined, output_path)
+    
+    print(f"\n✅ Saved {len(combined):,} candle records to {output_path}")
+    print(f"   Symbols: {combined['symbol'].nunique()}")
+    print(f"   Date range: {combined['date'].min()} to {combined['date'].max()}")
 
 
 if __name__ == "__main__":
