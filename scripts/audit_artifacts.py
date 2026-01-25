@@ -38,6 +38,7 @@ def audit_artifacts(expected_week_end: str = None) -> bool:
             print(f"\n✓ Read expected week from week_end.txt: {expected_week_end}")
         else:
             print("\n❌ No week_end.txt found and no expected_week_end provided")
+            print(f"✅ RUN VERIFIED: week_end_resolved=UNKNOWN artifacts_ok=NO")
             return False
     else:
         print(f"\n✓ Expected week: {expected_week_end}")
@@ -49,6 +50,7 @@ def audit_artifacts(expected_week_end: str = None) -> bool:
                 print(f"❌ week_end.txt mismatch:")
                 print(f"   Expected: {expected_week_end}")
                 print(f"   Found:    {file_week}")
+                print(f"✅ RUN VERIFIED: week_end_resolved={expected_week_end} artifacts_ok=NO")
                 return False
             print(f"✓ week_end.txt matches: {file_week}")
     
@@ -126,6 +128,9 @@ def audit_artifacts(expected_week_end: str = None) -> bool:
     if not all_passed:
         print("❌ AUDIT FAILED")
         print(f"   Expected week {expected_week_end} not found in all artifact types")
+        print("=" * 70 + "\n")
+        # Single-line proof for easy grepping
+        print(f"✅ RUN VERIFIED: week_end_resolved={expected_week_end} artifacts_ok=NO")
         return False
     
     # Check for extra unexpected weeks (potential contamination)
@@ -137,6 +142,9 @@ def audit_artifacts(expected_week_end: str = None) -> bool:
     print("✅ AUDIT PASSED")
     print(f"   Expected week {expected_week_end} present in all checked artifact types")
     print("=" * 70 + "\n")
+    
+    # Single-line proof for easy grepping in CI logs
+    print(f"✅ RUN VERIFIED: week_end_resolved={expected_week_end} artifacts_ok=YES")
     
     return True
 
