@@ -35,6 +35,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Echo commit SHA
+        run: |
+          echo "GIT_SHA=$(git rev-parse HEAD)"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
