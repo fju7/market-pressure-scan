@@ -73,7 +73,7 @@ def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str, 
                 })
             
             return pd.DataFrame(records)
-                    print(f"\n✓ Saved {len(combined):,} news articles to {output_path}")
+
         except requests.exceptions.RequestException as e:
             if attempt == max_retries - 1:
                 # Last attempt failed
@@ -99,8 +99,6 @@ def filter_symbols_by_movement(symbols: list, week_end_date, api_key: str,
         price_threshold: Minimum absolute price change (default: 5%)
     
     Returns:
-        Filtered list of symbols
-    """
     # This is a placeholder implementation
     # In production, you'd fetch recent candles and filter by:
     # - Price change > price_threshold (e.g., 5%)
@@ -119,6 +117,9 @@ def main(universe_path: str, week_end: str, coverage_threshold: float = 0.75,
     Args:
         universe_path: Path to universe CSV file
         week_end: Week ending date (YYYY-MM-DD)
+                write_parquet_atomic(combined, output_path)
+                print(f"\nSaved {len(combined):,} news articles to {output_path}")
+                return pd.DataFrame(records)
         coverage_threshold: Minimum fraction of symbols that must have news (default: 0.75 = 75%)
         filter_by_movement: If True, only fetch news for symbols with significant price/volume movement (default: False)
         qps_limit: Query-per-second rate limit (default: 0.5 = 30 calls/min)
@@ -244,14 +245,12 @@ def main(universe_path: str, week_end: str, coverage_threshold: float = 0.75,
     output_dir = Path("data/derived/company_news") / f"week_ending={week_end}"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "company_news.parquet"
+        write_parquet_atomic(combined, output_path)
+        print(f"\n✓ Saved {len(combined):,} news articles to {output_path}")
+        print(f"   Symbols: {combined['symbol'].nunique()}")
+        print(f"   Date range: {combined['published_utc'].min()} to {combined['published_utc'].max()}")
 
-    if should_skip(output_path, force):
-        print(f"SKIP: {output_path} exists and --force not set.")
-        return
-
-    combined.to_parquet(output_path, index=False)
-
-    print(f"\n 5 Saved {len(combined):,} news articles to {output_path}")
+    print(f"\n5 Saved {len(combined):,} news articles to {output_path}")
     if not combined.empty:
         print(f"   Symbols: {combined['symbol'].nunique()}")
         print(f"   Sources: {combined['source'].nunique()}")
