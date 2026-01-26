@@ -56,21 +56,43 @@ def load_week(paths: Paths, week_end: str, regime: str, schema: str) -> Tuple[pd
 
     # Fallbacks for scores: regime-only, then legacy
     if not scores_p.exists():
-            scores_p_regime = paths.derived / "scores_weekly" / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet"
+        scores_p_regime = (
+            paths.derived
+            / "scores_weekly"
+            / f"regime={regime}"
+            / f"schema={schema}"
+            / f"week_ending={week_end}"
+            / "scores_weekly.parquet"
+        )
         if scores_p_regime.exists():
             scores_p = scores_p_regime
         else:
-            scores_p_legacy = paths.derived / "scores_weekly" / f"week_ending={week_end}" / "scores_weekly.parquet"
+            scores_p_legacy = (
+                paths.derived
+                / "scores_weekly"
+                / f"week_ending={week_end}"
+                / "scores_weekly.parquet"
+            )
             if scores_p_legacy.exists():
                 scores_p = scores_p_legacy
 
     # Fallbacks for features: regime-only, then legacy
     if not feats_p.exists():
-            feats_p_regime = paths.features_dir / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "features_weekly.parquet"
+        feats_p_regime = (
+            paths.features_dir
+            / f"regime={regime}"
+            / f"schema={schema}"
+            / f"week_ending={week_end}"
+            / "features_weekly.parquet"
+        )
         if feats_p_regime.exists():
             feats_p = feats_p_regime
         else:
-            feats_p_legacy = paths.features_dir / f"week_ending={week_end}" / "features_weekly.parquet"
+            feats_p_legacy = (
+                paths.features_dir
+                / f"week_ending={week_end}"
+                / "features_weekly.parquet"
+            )
             if feats_p_legacy.exists():
                 feats_p = feats_p_legacy
     
