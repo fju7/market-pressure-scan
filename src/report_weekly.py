@@ -31,34 +31,48 @@ class Paths:
     enriched_dir: Path
     reports_dir: Path
 
-def default_paths() -> Paths:
+def default_paths(regime: str, schema: str) -> Paths:
     root = Path(__file__).resolve().parents[1]
     derived = root / "data" / "derived"
+    scores_dir = derived / "scores_weekly" / f"regime={regime}" / f"schema={schema}"
+    features_dir = derived / "features_weekly"
+    clusters_dir = derived / "news_clusters"
+    enriched_dir = derived / "rep_enriched"
+    reports_dir = derived / "reports"
     return Paths(
         root=root,
         derived=derived,
-        scores_dir=derived / "scores_weekly",
-        features_dir=derived / "features_weekly",
-        clusters_dir=derived / "news_clusters",
-        enriched_dir=derived / "rep_enriched",
-        reports_dir=derived / "reports",
+        scores_dir=scores_dir,
+        features_dir=features_dir,
+        clusters_dir=clusters_dir,
+        enriched_dir=enriched_dir,
+        reports_dir=reports_dir,
     )
 
-def load_week(paths: Paths, week_end: str, regime: str = "news-novelty-v1") -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    # Try regime-specific path first (new format)
-    scores_p = paths.scores_dir / f"regime={regime}" / f"week_ending={week_end}" / "scores_weekly.parquet"
+def load_week(paths: Paths, week_end: str, regime: str, schema: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    # Try regime+schema-specific path first (new format)
+    scores_p = paths.scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
     feats_p  = paths.features_dir / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet"
-    
-    # Fall back to legacy non-regime path if regime path doesn't exist
+
+    # Fallbacks for scores: regime-only, then legacy
     if not scores_p.exists():
-        scores_p_legacy = paths.scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
-        if scores_p_legacy.exists():
-            scores_p = scores_p_legacy
-    
+        scores_p_regime = paths.derived / "scores_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "scores_weekly.parquet"
+        if scores_p_regime.exists():
+            scores_p = scores_p_regime
+        else:
+            scores_p_legacy = paths.derived / "scores_weekly" / f"week_ending={week_end}" / "scores_weekly.parquet"
+            if scores_p_legacy.exists():
+                scores_p = scores_p_legacy
+
+    # Fallbacks for features: regime-only, then legacy
     if not feats_p.exists():
-        feats_p_legacy = paths.features_dir / f"week_ending={week_end}" / "features_weekly.parquet"
-        if feats_p_legacy.exists():
-            feats_p = feats_p_legacy
+        feats_p_regime = paths.features_dir / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet"
+        if feats_p_regime.exists():
+            feats_p = feats_p_regime
+        else:
+            feats_p_legacy = paths.features_dir / f"week_ending={week_end}" / "features_weekly.parquet"
+            if feats_p_legacy.exists():
+                feats_p = feats_p_legacy
     
     clus_p   = paths.clusters_dir / f"week_ending={week_end}" / "clusters.parquet"
     enr_p    = paths.enriched_dir / f"week_ending={week_end}" / "rep_enriched.parquet"
@@ -532,9 +546,9 @@ def build_report_markdown(
     return "\n".join(summary_lines), meta
 
 
-def run(week_end: str, regime: str = "news-novelty-v1", top_n: int = 20, bottom_n: int = 20) -> Path:
-    paths = default_paths()
-    scores, feats, clusters, enriched = load_week(paths, week_end, regime)
+def run(week_end: str, regime: str = "news-novelty-v1", schema: str = "news-novelty-v1b", top_n: int = 20, bottom_n: int = 20) -> Path:
+    paths = default_paths(regime, schema)
+    scores, feats, clusters, enriched = load_week(paths, week_end, regime, schema)
 
     md, meta = build_report_markdown(
         week_end=week_end,
@@ -545,6 +559,10 @@ def run(week_end: str, regime: str = "news-novelty-v1", top_n: int = 20, bottom_
         top_n=top_n,
         bottom_n=bottom_n,
     )
+
+    # Add regime and schema to meta
+    meta["regime"] = regime
+    meta["schema"] = schema
 
     out_dir = paths.reports_dir / f"week_ending={week_end}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -564,8 +582,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--week_end", required=True, help="Week ending Friday (ET) YYYY-MM-DD")
     ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    ap.add_argument("--schema", default="news-novelty-v1b", help="Schema ID (e.g., news-novelty-v1, news-novelty-v1b)")
     ap.add_argument("--top_n", type=int, default=20)
     ap.add_argument("--bottom_n", type=int, default=20)
     args = ap.parse_args()
 
-    run(args.week_end, regime=args.regime, top_n=args.top_n, bottom_n=args.bottom_n)
+    run(args.week_end, regime=args.regime, schema=args.schema, top_n=args.top_n, bottom_n=args.bottom_n)

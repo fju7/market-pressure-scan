@@ -62,15 +62,13 @@ class Paths:
     out_scores_dir: Path
     regime_id: str = "news-novelty-v1"  # For provenance tracking
 
-def default_paths(regime_id: str = "news-novelty-v1") -> Paths:
+def default_paths(regime_id: str = "news-novelty-v1", schema_id: str | None = None) -> Paths:
     root = Path(__file__).resolve().parents[1]
     derived = root / "data" / "derived"
-    
-    # DerivedPaths doesn't store regime, it takes it as method arg
-    # We'll construct regime-namespaced paths directly here
     features_base = derived / "features_weekly" / f"regime={regime_id}"
     scores_base = derived / "scores_weekly" / f"regime={regime_id}"
-    
+    if schema_id:
+        scores_base = scores_base / f"schema={schema_id}"
     return Paths(
         root=root,
         derived=derived,
@@ -914,16 +912,26 @@ def run(
     regime_id: str = "news-novelty-v1",
     schema_id: Optional[str] = None,
 ):
-    # Schema ID defaults to regime ID if not provided
+    # Schema selection logic: args.schema > regime config default_schema > fallback
+    import yaml
+    regime_cfg_path = Path("config/regimes") / f"{regime_id}.yaml"
+    regime_cfg = {}
+    if regime_cfg_path.exists():
+        with open(regime_cfg_path, "r") as f:
+            regime_cfg = yaml.safe_load(f)
+    default_schema = regime_cfg.get("default_schema") if regime_cfg else None
     if schema_id is None:
-        schema_id = regime_id
-    
+        if default_schema:
+            schema_id = default_schema
+        else:
+            schema_id = "news-novelty-v1"
+
     # Load scoring schema
     schema = load_schema(schema_id)
     print(f"📋 Using schema: {schema.schema_id} (hash: {schema.content_hash})")
     print(f"   Weights: {schema.get_weights()}")
     print(f"   Skip rules: {schema.get_skip_rules()}")
-    
+
     paths = default_paths(regime_id=regime_id)
     week_end_et = parse_week_end(week_end)
 
@@ -958,7 +966,7 @@ def run(
     print("\n" + "="*60)
     print("📊 SCORING SELF-CHECK")
     print("="*60)
-    
+
     # Check for NaN features
     scoring_features = ["NV", "NA", "NS", "SS", "EI", "EC", "AR5", "VS_raw", "RV60"]
     nan_pcts = {}
@@ -966,19 +974,19 @@ def run(
         if feat in features.columns:
             nan_pct = features[feat].isna().sum() / len(features) * 100
             nan_pcts[feat] = nan_pct
-    
+
     # Show top 10 worst NaN offenders
     if nan_pcts:
         print(f"\nNaN% per feature (top 10 worst):")
         sorted_nans = sorted(nan_pcts.items(), key=lambda x: x[1], reverse=True)[:10]
         for feat, pct in sorted_nans:
             print(f"  {feat:15s}: {pct:5.1f}%")
-    
+
     # Score distribution
     print(f"\nScores DataFrame:")
     print(f"  Rows: {len(scores)}")
     print(f"  Symbols eligible for scoring: {scores['symbol'].nunique() if 'symbol' in scores.columns else 'N/A'}")
-    
+
     if "UPS_adj" in scores.columns:
         ups_valid = scores["UPS_adj"].notna() & np.isfinite(scores["UPS_adj"])
         print(f"\nUPS_adj distribution:")
@@ -988,7 +996,7 @@ def run(
             print(f"  Min:    {valid_ups.min():.4f}")
             print(f"  Median: {valid_ups.median():.4f}")
             print(f"  Max:    {valid_ups.max():.4f}")
-            
+
             # Top 5 and bottom 5
             top5 = scores.nlargest(5, "UPS_adj")[["symbol", "UPS_adj"]]
             bottom5 = scores.nsmallest(5, "UPS_adj")[["symbol", "UPS_adj"]]
@@ -998,7 +1006,7 @@ def run(
             print(f"\nBottom 5 symbols by UPS_adj:")
             for idx, row in bottom5.iterrows():
                 print(f"  {row['symbol']:6s}: {row['UPS_adj']:7.4f}")
-    
+
     print("="*60 + "\n")
 
     # Write outputs with regime-namespaced paths
@@ -1009,7 +1017,7 @@ def run(
 
     feat_path = out_feat_dir / "features_weekly.parquet"
     score_path = out_score_dir / "scores_weekly.parquet"
-    
+
     # Use atomic writes to prevent corruption
     write_parquet_atomic(features, feat_path)
     write_parquet_atomic(scores, score_path)
@@ -1017,45 +1025,73 @@ def run(
     print(f"Wrote: {feat_path}")
     print(f"Wrote: {score_path}")
     print(f"Rows: features={len(features):,}, scores={len(scores):,}")
-    
+
     # Write schema provenance
     schema_prov_path = write_schema_provenance(schema, out_score_dir)
     print(f"Wrote schema provenance: {schema_prov_path}")
-    
+
     # Write report_meta.json with full provenance
     try:
         git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=paths.root, text=True).strip()
     except Exception:
         git_sha = "unknown"
-    
+
+    # Count clusters and symbols for diagnostics
+    cluster_count = None
+    symbol_count = None
+    try:
+        # Try to count clusters from the features DataFrame if available
+        if "count_5d_dedup" in features.columns:
+            cluster_count = int(features["count_5d_dedup"].sum())
+        symbol_count = int(features["symbol"].nunique())
+    except Exception:
+        pass
+
     report_meta = {
         "week_end": week_end,
-        "regime_id": regime_id,
+        "regime": regime_id,
         "schema_id": schema.schema_id,
         "schema_hash": schema.content_hash,
         "git_sha": git_sha,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "n_features": len(features),
         "n_scores": len(scores),
+        "cluster_count": cluster_count,
+        "symbol_count": symbol_count,
     }
-    
+
     meta_path = out_score_dir / "report_meta.json"
     meta_path.write_text(json.dumps(report_meta, indent=2))
     print(f"Wrote provenance: {meta_path}")
 
 if __name__ == "__main__":
+    import shutil
     p = argparse.ArgumentParser()
     p.add_argument("--universe", required=True, help="Path to sp500_universe.csv")
     p.add_argument("--week_end", required=True, help="Week ending Friday (ET) YYYY-MM-DD")
     p.add_argument("--lookback_weeks", default=12, type=int, help="History window in weeks for NV/NA and baselines")
     p.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
-    p.add_argument("--schema", default=None, help="Schema ID (defaults to regime ID if not specified)")
+    p.add_argument("--schema", default="news-novelty-v1b", help="Scoring schema ID")
     args = p.parse_args()
 
+    print(f"\n🔒 FEATURES_SCORES RUN")
+    print(f"   Regime: {args.regime}")
+    print(f"   Schema: {args.schema}")
+
+    paths = default_paths(args.regime, schema_id=args.schema)
     run(
         Path(args.universe),
         args.week_end,
         lookback_weeks=args.lookback_weeks,
-        regime_id=args.regime,
+        paths=paths,
         schema_id=args.schema,
     )
+
+    # Optional legacy compat copy
+    week_end = args.week_end
+    score_path = paths.out_scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
+    legacy_dir = Path("data/derived/scores_weekly") / f"regime={args.regime}" / f"week_ending={week_end}"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    legacy_path = legacy_dir / "scores_weekly.parquet"
+    if not legacy_path.exists() and score_path.exists():
+        shutil.copy2(score_path, legacy_path)

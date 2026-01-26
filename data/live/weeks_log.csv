@@ -1,7 +1,0 @@
-"week_ending_date","action","basket_size","overlap_pct","turnover_pct","num_clusters","avg_novelty_z","avg_event_intensity_z","recap_pct","is_low_info","num_positions","logged_at","skip_reason"
-"2025-11-27","SKIP","0","0.0","0.0","494","0.0","-7.191728094737856e-18","39.27125506072874","True","0","2025-11-27 00:00:00","novelty and event intensity are near zero on average"
-"2025-12-04","SKIP","0","0.0","0.0","499","0.0","-7.119666690982967e-18","52.705410821643284","True","0","2025-12-04 00:00:00","novelty and event intensity are near zero on average"
-"2025-12-18","SKIP","0","0.0","0.0","501","0.0","2.481935703752845e-17","45.309381237524946","True","0","2025-12-18 00:00:00","novelty and event intensity are near zero on average"
-"2025-12-25","SKIP","0","0.0","0.0","487","0.0","-3.8299274771463306e-17","35.1129363449692","True","0","2025-12-25 00:00:00","novelty and event intensity are near zero on average"
-"2026-01-09","SKIP","0","0.0","0.0","5","0.0","0.125","80.0","True","0","2026-01-09 00:00:00","80% of clusters are PRICE_ACTION_RECAP; only 5 total clusters"
-"2026-01-16","TRADE","4","0.0","0.0","5","0.0","0.0","100.0","True","4","2026-01-16 00:00:00",""

@@ -1,4 +1,9 @@
 name: news-novelty-v1
+regime_id: news-novelty-v1
+default_schema: news-novelty-v1b
+schemas:
+  - news-novelty-v1
+  - news-novelty-v1b
 skip_rules:
   enabled: true
   min_total_novelty: 0.60

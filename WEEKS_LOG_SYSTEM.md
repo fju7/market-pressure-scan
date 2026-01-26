@@ -1,32 +1,28 @@
 # Weeks Log System
 
-## Overview
-
+ Correct path: `data/derived/live/weeks_log.csv`
+ Not: `data/live/weeks_log.csv`
 The weeks log system maintains a canonical, sorted, deduplicated ledger of all weekly pipeline runs in `data/live/weeks_log.csv`.
 
 ## Components
 
 ### 1. `src/log_week_decision.py`
 
-**Purpose:** Log a single week's decision (TRADE or SKIP) to the weeks log.
 
 **Usage:**
 ```bash
 python -m src.log_week_decision --week_end 2026-01-23
 ```
-
-**Behavior:**
-- Reads basket and report metadata for the specified week
 - Calculates turnover metrics by comparing with the most recent prior TRADE week
 - Appends one row to `data/live/weeks_log.csv`
-- Skips if the week is already logged (duplicate protection)
-- Uses `QUOTE_ALL` for CSV safety (prevents corruption from special characters)
+ wc -l data/derived/live/weeks_log.csv
+ tail -n 10 data/derived/live/weeks_log.csv
 
 **Schema:**
 ```csv
 week_ending_date,action,basket_size,overlap_pct,turnover_pct,num_clusters,avg_novelty_z,avg_event_intensity_z,recap_pct,is_low_info,num_positions,logged_at,skip_reason
-```
-
+ Correct path: `data/derived/live/weeks_log.csv`
+ Not: `data/live/weeks_log.csv`
 ### 2. `src/rebuild_weeks_log.py`
 
 **Purpose:** Rebuild the entire weeks log from scratch by discovering all weeks.
@@ -36,6 +32,7 @@ week_ending_date,action,basket_size,overlap_pct,turnover_pct,num_clusters,avg_no
 python -m src.rebuild_weeks_log
 ```
 
+ df = pd.read_csv("data/derived/live/weeks_log.csv")
 **Behavior:**
 - Discovers all weeks from `data/derived/reports/week_ending=*`
 - Computes each row using the same logic as `log_week_decision`
