@@ -33,8 +33,14 @@ jobs:
     outputs:
       week_end: ${{ steps.week_end.outputs.week_end }}
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Debug import + repo contents
         run: |
