@@ -1,4 +1,3 @@
-          python -m src.trader_sheet --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
 name: Weekly Market Pressure Scan
 
 on:
