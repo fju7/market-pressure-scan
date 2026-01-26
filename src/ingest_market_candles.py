@@ -4,6 +4,7 @@ Stores results in data/derived/market_daily/candles_daily.parquet
 """
 
 import argparse
+from src.reuse import should_skip
 import os
 import time
 from datetime import datetime, timedelta
@@ -69,7 +70,7 @@ def fetch_candles(symbol: str, from_ts: int, to_ts: int, api_key: str, max_retri
     return pd.DataFrame()
 
 
-def main(universe_path: str, week_end: str):
+def main(universe_path: str, week_end: str, force: bool = False):
     api_key = os.environ.get("FINNHUB_API_KEY")
     if not api_key:
         raise ValueError("FINNHUB_API_KEY environment variable not set")
@@ -172,10 +173,14 @@ def main(universe_path: str, week_end: str):
     output_dir = Path("data/derived/market_daily")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "candles_daily.parquet"
-    
+
+    if should_skip(output_path, force):
+        print(f"SKIP: {output_path} exists and --force not set.")
+        return
+
     write_parquet_atomic(combined, output_path)
-    
-    print(f"\n✅ Saved {len(combined):,} candle records to {output_path}")
+
+    print(f"\n✓ Saved {len(combined):,} candle records to {output_path}")
     print(f"   Symbols: {combined['symbol'].nunique()}")
     print(f"   Date range: {combined['date'].min()} to {combined['date'].max()}")
 
@@ -184,6 +189,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser("Ingest market candles from Finnhub")
     ap.add_argument("--universe", required=True, help="Path to universe CSV with 'symbol' column")
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+    ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
-    
-    main(args.universe, args.week_end)
+
+    main(args.universe, args.week_end, force=args.force)

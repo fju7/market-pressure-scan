@@ -1,6 +1,15 @@
+
+"""
+Clusters company news articles by symbol and content similarity.
+
+Input:  data/derived/company_news/week_ending=<W>/company_news.parquet
+Output: data/derived/news_clusters/week_ending=<W>/clusters.parquet
+"""
 from __future__ import annotations
+from src.io_atomic import write_parquet_atomic
 
 import argparse
+from src.reuse import should_skip
 import hashlib
 import re
 from dataclasses import dataclass
@@ -54,12 +63,17 @@ class ClusterConfig:
     max_docs_per_symbol: int = 5000  # safety
 
 def run(week_end: str,
-        in_parquet: Path,
-        out_parquet: Path,
-        jaccard_threshold: float = 0.55,
-        max_clusters_per_symbol: int = 2) -> Path:
+    in_parquet: Path,
+    out_parquet: Path,
+    jaccard_threshold: float = 0.55,
+    max_clusters_per_symbol: int = 2,
+    force: bool = False) -> Path:
     if not in_parquet.exists():
         raise FileNotFoundError(f"Missing raw news file: {in_parquet}")
+
+    if should_skip(out_parquet, force):
+        print(f"SKIP: {out_parquet} exists and --force not set.")
+        return out_parquet
 
     raw = pd.read_parquet(in_parquet)
 
@@ -148,21 +162,29 @@ def run(week_end: str,
 
     out = pd.DataFrame(clusters_out)
     out_parquet.parent.mkdir(parents=True, exist_ok=True)
-    out.to_parquet(out_parquet, index=False)
+    write_parquet_atomic(out, out_parquet)
     print(f"Wrote: {out_parquet} ({len(out):,} rows)")
     return out_parquet
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--week_end", required=True)
-    ap.add_argument("--in", dest="inp", default=None)
-    ap.add_argument("--out", dest="outp", default=None)
-    ap.add_argument("--jaccard", type=float, default=0.55)
-    ap.add_argument("--max_clusters_per_symbol", type=int, default=2, help="Limit clusters per symbol (post-clustering)")
+    ap = argparse.ArgumentParser("Cluster company news into story clusters (token Jaccard)")
+    ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+    ap.add_argument("--in", dest="inp", default=None, help="Input parquet (default: derived/company_news for week_end)")
+    ap.add_argument("--out", dest="outp", default=None, help="Output parquet (default: derived/news_clusters for week_end)")
+    ap.add_argument("--jaccard", type=float, default=0.55, help="Jaccard threshold for greedy clustering")
+    ap.add_argument("--max_clusters_per_symbol", type=int, default=2, help="Keep top N clusters per symbol")
+    ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
 
-    inp = args.inp or f"data/derived/news_raw/week_ending={args.week_end}/company_news.parquet"
-    outp = args.outp or f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
+    inp = Path(args.inp) if args.inp else Path(f"data/derived/company_news/week_ending={args.week_end}/company_news.parquet")
+    outp = Path(args.outp) if args.outp else Path(f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet")
 
-    run(args.week_end, Path(inp), Path(outp), jaccard_threshold=args.jaccard, max_clusters_per_symbol=args.max_clusters_per_symbol)
+    run(
+        week_end=args.week_end,
+        in_parquet=inp,
+        out_parquet=outp,
+        jaccard_threshold=args.jaccard,
+        max_clusters_per_symbol=args.max_clusters_per_symbol,
+        force=args.force,
+    )

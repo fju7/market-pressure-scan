@@ -51,19 +51,28 @@ def dump_df(df: pd.DataFrame, out_dir: Path, name: str):
 NY = tz.gettz("America/New_York")
 
 @dataclass(frozen=True)
+
 class Paths:
     root: Path
     derived: Path
+    # Canonical artifact locations (single source of truth)
+    market_daily_path: Path
+    company_news_dir: Path
     news_clusters_dir: Path
     rep_enriched_dir: Path
-    market_daily_path: Path
     out_features_dir: Path
     out_scores_dir: Path
     regime_id: str = "news-novelty-v1"  # For provenance tracking
 
+
 def default_paths(regime_id: str = "news-novelty-v1", schema_id: str | None = None) -> Paths:
     root = Path(__file__).resolve().parents[1]
     derived = root / "data" / "derived"
+    # Canonical artifact locations
+    market_daily_path = derived / "market_daily" / "candles_daily.parquet"
+    company_news_dir = derived / "company_news"
+    news_clusters_dir = derived / "news_clusters"
+    rep_enriched_dir = derived / "rep_enriched"
     features_base = derived / "features_weekly" / f"regime={regime_id}"
     scores_base = derived / "scores_weekly" / f"regime={regime_id}"
     if schema_id:
@@ -71,9 +80,10 @@ def default_paths(regime_id: str = "news-novelty-v1", schema_id: str | None = No
     return Paths(
         root=root,
         derived=derived,
-        news_clusters_dir=derived / "news_clusters",
-        rep_enriched_dir=derived / "rep_enriched",
-        market_daily_path=derived / "market_daily" / "candles_daily.parquet",
+        market_daily_path=market_daily_path,
+        company_news_dir=company_news_dir,
+        news_clusters_dir=news_clusters_dir,
+        rep_enriched_dir=rep_enriched_dir,
         out_features_dir=features_base,
         out_scores_dir=scores_base,
         regime_id=regime_id,
@@ -919,6 +929,14 @@ def run(
     _debug_env_stamp()
     if paths is None:
         paths = default_paths(regime_id=regime_id, schema_id=schema_id)
+
+    # Output path for skip logic
+    out_score_dir = paths.out_scores_dir / f"week_ending={week_end}"
+    score_path = out_score_dir / "scores_weekly.parquet"
+    from src.reuse import should_skip
+    if should_skip(score_path, force):
+        print(f"SKIP: {score_path} exists and --force not set.")
+        return
     # Schema selection logic: args.schema > regime config default_schema > fallback
     import yaml
     regime_cfg_path = Path("config/regimes") / f"{regime_id}.yaml"

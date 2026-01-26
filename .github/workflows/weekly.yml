@@ -24,6 +24,7 @@ concurrency:
 
 
 
+
 jobs:
   build_artifacts:
     runs-on: ubuntu-latest
@@ -73,8 +74,8 @@ jobs:
           echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
           echo "✓ Week ending: $WEEK_END"
 
-      - name: Restore upstream artifacts cache
-        id: cache-upstream-restore
+      - name: Restore derived cache
+        id: cache-derived-restore
         uses: actions/cache@v4
         with:
           path: |
@@ -83,10 +84,11 @@ jobs:
             data/derived/news_clusters
             data/derived/rep_enriched
             data/derived/features_weekly
-          key: upstream-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+            data/derived/scores_weekly
+          key: derived-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
           restore-keys: |
-            upstream-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-            upstream-${{ steps.week_end.outputs.week_end }}-
+            derived-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+            derived-${{ steps.week_end.outputs.week_end }}-
 
       - name: Verify required secrets present
         env:
@@ -118,6 +120,7 @@ jobs:
             data/derived/news_clusters
             data/derived/rep_enriched
             data/derived/features_weekly
+            data/derived/scores_weekly
           key: upstream-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
 
   score:
@@ -134,8 +137,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Restore upstream artifacts cache
-        id: cache-upstream-restore
+      - name: Restore derived cache
+        id: cache-derived-restore
         uses: actions/cache@v4
         with:
           path: |
@@ -144,10 +147,11 @@ jobs:
             data/derived/news_clusters
             data/derived/rep_enriched
             data/derived/features_weekly
-          key: upstream-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+            data/derived/scores_weekly
+          key: derived-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
           restore-keys: |
-            upstream-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-            upstream-${{ needs.build_artifacts.outputs.week_end }}-
+            derived-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+            derived-${{ needs.build_artifacts.outputs.week_end }}-
 
       - name: Restore scores cache
         id: cache-scores-restore
@@ -202,8 +206,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Restore upstream artifacts cache
-        id: cache-upstream-restore
+      - name: Restore derived cache
+        id: cache-derived-restore
         uses: actions/cache@v4
         with:
           path: |
@@ -212,10 +216,10 @@ jobs:
             data/derived/news_clusters
             data/derived/rep_enriched
             data/derived/features_weekly
-          key: upstream-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+          key: derived-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
           restore-keys: |
-            upstream-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-            upstream-${{ needs.score.outputs.week_end }}-
+            derived-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+            derived-${{ needs.score.outputs.week_end }}-
 
       - name: Restore scores cache
         id: cache-scores-restore

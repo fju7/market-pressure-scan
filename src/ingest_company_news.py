@@ -1,12 +1,14 @@
 """
-Ingest company news for universe using Finnhub API.
-Stores results in data/derived/news_raw/week_ending=YYYY-MM-DD/company_news.parquet
+Ingest company news for a universe using the Finnhub API.
+Stores results in data/derived/company_news/week_ending=YYYY-MM-DD/company_news.parquet (canonical artifact).
 """
 
 import argparse
+from src.reuse import should_skip
 import os
 import random
 import sys
+from src.io_atomic import write_parquet_atomic
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,9 +50,9 @@ def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str, 
                 wait_time = base_wait + jitter
                 print(f"⚠️  Rate limited (429), retry {attempt+1}/{max_retries}, waiting {wait_time:.1f}s...")
                 time.sleep(wait_time)
-                continue
-            
-            response.raise_for_status()
+            write_parquet_atomic(combined, output_path)
+
+            print(f"\nSaved {len(combined):,} news articles to {output_path}")
             
             data = response.json()
             
@@ -71,7 +73,7 @@ def fetch_company_news(symbol: str, from_date: str, to_date: str, api_key: str, 
                 })
             
             return pd.DataFrame(records)
-            
+                    print(f"\n✓ Saved {len(combined):,} news articles to {output_path}")
         except requests.exceptions.RequestException as e:
             if attempt == max_retries - 1:
                 # Last attempt failed
@@ -110,7 +112,7 @@ def filter_symbols_by_movement(symbols: list, week_end_date, api_key: str,
 
 def main(universe_path: str, week_end: str, coverage_threshold: float = 0.75, 
          filter_by_movement: bool = False, qps_limit: float = 0.5, fast_fail_threshold: float = 0.3,
-         fast_fail_check_interval: int = 100):
+         fast_fail_check_interval: int = 100, force: bool = False):
     """
     Ingest company news with retry, backoff, and coverage guardrails.
     
@@ -239,13 +241,17 @@ def main(universe_path: str, week_end: str, coverage_threshold: float = 0.75,
         # print(f"[INFO] relevance filter kept {len(combined):,} rows")
     
     # Save to parquet
-    output_dir = Path("data/derived/news_raw") / f"week_ending={week_end}"
+    output_dir = Path("data/derived/company_news") / f"week_ending={week_end}"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "company_news.parquet"
-    
+
+    if should_skip(output_path, force):
+        print(f"SKIP: {output_path} exists and --force not set.")
+        return
+
     combined.to_parquet(output_path, index=False)
-    
-    print(f"\n✅ Saved {len(combined):,} news articles to {output_path}")
+
+    print(f"\n 5 Saved {len(combined):,} news articles to {output_path}")
     if not combined.empty:
         print(f"   Symbols: {combined['symbol'].nunique()}")
         print(f"   Sources: {combined['source'].nunique()}")
@@ -287,8 +293,9 @@ if __name__ == "__main__":
         default=100,
         help="Check coverage after this many symbols for fast-fail (default: 100)"
     )
+    ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
-    
+
     main(args.universe, args.week_end, args.coverage_threshold, 
          args.filter_by_movement, args.qps_limit, args.fast_fail_threshold,
-         args.fast_fail_check_interval)
+         args.fast_fail_check_interval, force=args.force)

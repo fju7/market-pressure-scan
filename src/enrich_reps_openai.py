@@ -1,6 +1,11 @@
+
 from __future__ import annotations
+from src.io_atomic import write_parquet_atomic
 
 import argparse
+import hashlib
+from src.reuse import should_skip
+from src.io_atomic import write_parquet_atomic
 import json
 import os
 import time
@@ -157,7 +162,31 @@ def run(
     limit: int | None = None,
     jaccard_threshold: float = 0.55,
     max_clusters_per_symbol: int = 1,
+    force: bool = False,
 ) -> Path:
+
+    # Skip before doing anything expensive (including creating the OpenAI client)
+    out_parquet = Path(out_parquet)
+    meta_path = out_parquet.parent / "meta.json"
+    if should_skip(out_parquet, force):
+        print(f"SKIP: {out_parquet} exists and --force not set.")
+        out_parquet.parent.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "week_end": week_end,
+            "emb_model": emb_model,
+            "cls_model": cls_model,
+            "jaccard_threshold": jaccard_threshold,
+            "max_clusters_per_symbol": max_clusters_per_symbol,
+            "output": str(out_parquet),
+            "cache_key": hashlib.sha256(
+                f"{emb_model}|{cls_model}|{jaccard_threshold}|{max_clusters_per_symbol}".encode()
+            ).hexdigest()[:16],
+            "skipped": True,
+        }
+        meta_path.write_text(json.dumps(meta, indent=2))
+        print(f"Wrote meta: {meta_path}")
+        return out_parquet
+
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         raise RuntimeError("Missing OPENAI_API_KEY environment variable.")
@@ -177,9 +206,24 @@ def run(
         print(f"[INFO] No clusters to process. Creating empty output.")
         out_parquet.parent.mkdir(parents=True, exist_ok=True)
         empty_df = pd.DataFrame(columns=["symbol", "cluster_id", "embedding", "sentiment_json", "event_json"])
-        empty_df.to_parquet(out_parquet, index=False)
+        write_parquet_atomic(empty_df, out_parquet)
+        # Write meta.json for empty case
+        meta_path = out_parquet.parent / "meta.json"
+        meta = {
+            "week_end": week_end,
+            "emb_model": emb_model,
+            "cls_model": cls_model,
+            "jaccard_threshold": jaccard_threshold,
+            "max_clusters_per_symbol": max_clusters_per_symbol,
+            "output": str(out_parquet),
+            "cache_key": hashlib.sha256(f"{emb_model}|{cls_model}|{jaccard_threshold}|{max_clusters_per_symbol}".encode()).hexdigest()[:16],
+            "skipped": False,
+            "rows": 0,
+        }
+        meta_path.write_text(json.dumps(meta, indent=2))
         print(f"Wrote: {out_parquet} (0 rows)")
-        return
+        print(f"Wrote meta: {meta_path}")
+        return out_parquet
 
     # Skip already enriched clusters if output exists
     existing = None
@@ -264,8 +308,23 @@ def run(
         out = new_out
 
     out_parquet.parent.mkdir(parents=True, exist_ok=True)
-    out.to_parquet(out_parquet, index=False)
+    write_parquet_atomic(out, out_parquet)
+    meta = {
+        "week_end": week_end,
+        "emb_model": emb_model,
+        "cls_model": cls_model,
+        "jaccard_threshold": jaccard_threshold,
+        "max_clusters_per_symbol": max_clusters_per_symbol,
+        "output": str(out_parquet),
+        "cache_key": hashlib.sha256(
+            f"{emb_model}|{cls_model}|{jaccard_threshold}|{max_clusters_per_symbol}".encode()
+        ).hexdigest()[:16],
+        "skipped": False,
+        "rows": int(len(out)),
+    }
+    meta_path.write_text(json.dumps(meta, indent=2))
     print(f"Wrote: {out_parquet} ({len(out):,} rows)")
+    print(f"Wrote meta: {meta_path}")
     return out_parquet
 
 
@@ -280,6 +339,7 @@ if __name__ == "__main__":
     ap.add_argument("--sleep_s", type=float, default=0.0)
     ap.add_argument("--limit", type=int, default=None, help="Limit number of clusters for testing")
     ap.add_argument("--max_clusters_per_symbol", type=int, default=1)
+    ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
 
     clusters = args.clusters or f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
@@ -294,4 +354,6 @@ if __name__ == "__main__":
         emb_batch_size=args.emb_batch_size,
         sleep_s=args.sleep_s,
         limit=args.limit,
+        max_clusters_per_symbol=args.max_clusters_per_symbol,
+        force=args.force,
     )
