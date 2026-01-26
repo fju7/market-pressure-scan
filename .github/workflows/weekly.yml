@@ -36,6 +36,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug src tree
+        run: |
+          pwd
+          ls -la
+          echo "---- src ----"
+          ls -la src
+          echo "---- find reuse ----"
+          find . -maxdepth 3 -name "reuse.py" -o -name "reuse*"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
