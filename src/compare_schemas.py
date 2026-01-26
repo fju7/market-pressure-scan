@@ -55,6 +55,7 @@ def load_scores(regime: str, schema: str, week_end: str) -> pd.DataFrame:
         schema_b = "news-novelty-v1b"
 
         weeks = discover_common_weeks(regime, schema_a, schema_b)
+        print(f"Common weeks ({len(weeks)}): {weeks}")
         if not weeks:
             raise SystemExit(f"No common weeks found for {schema_a} vs {schema_b} under {regime}")
 
