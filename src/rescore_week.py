@@ -147,6 +147,9 @@ def rescore_week(
             output_base / "features_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet",
             output_base / "features_weekly" / f"week_ending={week_end}" / "features_weekly.parquet",  # legacy fallback
         ]
+        print("   Feature candidates:")
+        for p in candidates:
+            print(f"     - {p} {'(FOUND)' if p.exists() else ''}")
         features_path = next((p for p in candidates if p.exists()), None)
         if features_path is None:
             raise FileNotFoundError(
