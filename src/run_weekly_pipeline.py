@@ -1,3 +1,22 @@
+def candles_path() -> Path:
+    return Path("data/derived/market_daily/candles_daily.parquet")
+
+def company_news_path(week_end: str) -> Path:
+    return Path(f"data/derived/company_news/week_ending={week_end}/company_news.parquet")
+
+def clusters_path(week_end: str) -> Path:
+    return Path(f"data/derived/news_clusters/week_ending={week_end}/clusters.parquet")
+
+def enriched_path(week_end: str) -> Path:
+    return Path(f"data/derived/rep_enriched/week_ending={week_end}/rep_enriched.parquet")
+
+def scores_path(week_end: str, regime: str, schema: str) -> Path:
+    return Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
+def skip_or_run(label: str, out_path: Path, force: bool, cmd: list[str]):
+    if out_path.exists() and not force:
+        print(f"\n⏭️  SKIP {label}: exists -> {out_path}")
+        return
+    sh(cmd)
 import argparse
 import subprocess
 import sys
@@ -91,6 +110,13 @@ def main():
     ap.add_argument("--max_clusters_per_symbol", type=int, default=None, 
                     help="Max clusters per symbol (default: from CONFIG.yaml)")
     ap.add_argument("--skip_backtest", action="store_true")
+    ap.add_argument("--force", action="store_true", help="Rebuild artifacts even if they already exist")
+    ap.add_argument(
+        "--from_stage",
+        default=None,
+        choices=["candles","news","cluster","enrich","score","report","basket","trader","log"],
+        help="Start from this stage (assumes prior artifacts exist)"
+    )
     args = ap.parse_args()
 
     # CRITICAL: Validate against week_end.txt (single source of truth)
@@ -139,92 +165,117 @@ def main():
     print(f"   Basket size: {config.get_basket_size()}")
     print(f"   Skip rules: {'ENABLED' if config.get_skip_rules_enabled() else 'DISABLED'}\n")
 
+
+    # Stage order and from_stage logic
+    order = ["candles","news","cluster","enrich","score","report","basket","trader","log"]
+    start_idx = order.index(args.from_stage) if args.from_stage else 0
+    def stage_enabled(name: str) -> bool:
+        return order.index(name) >= start_idx
+
     py = sys.executable
 
+    # Helper to append --force if needed
+    def add_force(cmd):
+        return cmd + (["--force"] if args.force else [])
+
     # 1) Market candles
-    sh([
-        py, "-m", "src.ingest_market_candles",
-        "--universe", args.universe,
-        "--week_end", args.week_end
-    ])
+    if stage_enabled("candles"):
+        skip_or_run(
+            "candles",
+            candles_path(),
+            args.force,
+            add_force([py, "-m", "src.ingest_market_candles", "--universe", args.universe, "--week_end", args.week_end])
+        )
 
     # 2) Company news
-    sh([
-        py, "-m", "src.ingest_company_news",
-        "--universe", args.universe,
-        "--week_end", args.week_end
-    ])
+    if stage_enabled("news"):
+        skip_or_run(
+            "company_news",
+            company_news_path(args.week_end),
+            args.force,
+            add_force([py, "-m", "src.ingest_company_news", "--universe", args.universe, "--week_end", args.week_end])
+        )
 
     # 3) Cluster news
-    sh([
-        py, "-m", "src.cluster_news",
-        "--week_end", args.week_end,
-        "--max_clusters_per_symbol", str(max_clusters)
-    ])
+    if stage_enabled("cluster"):
+        skip_or_run(
+            "cluster_news",
+            clusters_path(args.week_end),
+            args.force,
+            add_force([py, "-m", "src.cluster_news", "--week_end", args.week_end, "--max_clusters_per_symbol", str(max_clusters)])
+        )
 
     # 4) Enrich clusters (OpenAI)
-    sh([
-        py, "-m", "src.enrich_reps_openai",
-        "--week_end", args.week_end
-    ])
+    if stage_enabled("enrich"):
+        skip_or_run(
+            "enrich_reps_openai",
+            enriched_path(args.week_end),
+            args.force,
+            add_force([py, "-m", "src.enrich_reps_openai", "--week_end", args.week_end])
+        )
 
     # 5) Features + scores
-    sh([
-        py, "-m", "src.features_scores",
-        "--universe", args.universe,
-        "--week_end", args.week_end,
-        "--regime", args.regime,
-        "--schema", args.schema
-    ])
+    if stage_enabled("score"):
+        sh(add_force([
+            py, "-m", "src.features_scores",
+            "--universe", args.universe,
+            "--week_end", args.week_end,
+            "--regime", args.regime,
+            "--schema", args.schema
+        ]))
 
     # 6) Weekly report (with error fallback)
-    try:
+    if stage_enabled("report"):
+        try:
+            sh([
+                py, "-m", "src.report_weekly",
+                "--week_end", args.week_end,
+                "--regime", args.regime,
+                "--schema", args.schema
+            ])
+        except subprocess.CalledProcessError as e:
+            # If scores exist but report fails, log it to prevent silent week loss
+            scores_path_obj = Path(
+                f"data/derived/scores_weekly/regime={args.regime}/schema={args.schema}/"
+                f"week_ending={args.week_end}/scores_weekly.parquet"
+            )
+            if scores_path_obj.exists():
+                print(f"⚠️  WARNING: Scores exist but report_weekly failed. Logging ERROR_POST_SCORES to weeks_log.")
+                log_error_week(
+                    week_end=args.week_end,
+                    error_type="ERROR_POST_SCORES",
+                    regime=args.regime,
+                    scores_path=scores_path_obj,
+                    exception=e
+                )
+            raise  # Re-raise to still fail the pipeline
+
+    # 7) Export basket
+    if stage_enabled("basket"):
         sh([
-            py, "-m", "src.report_weekly",
+            py, "-m", "src.export_basket",
+            "--week_end", args.week_end,
+            "--regime", args.regime,
+            "--schema", args.schema,
+            "--skip_low_info"
+            # top_n now comes from CONFIG.yaml
+        ])
+
+    # 8) Trader sheet
+    if stage_enabled("trader"):
+        sh([
+            py, "-m", "src.trader_sheet",
             "--week_end", args.week_end,
             "--regime", args.regime,
             "--schema", args.schema
         ])
-    except subprocess.CalledProcessError as e:
-        # If scores exist but report fails, log it to prevent silent week loss
-        scores_path = Path(
-            f"data/derived/scores_weekly/regime={args.regime}/schema={args.schema}/"
-            f"week_ending={args.week_end}/scores_weekly.parquet"
-        )
-        if scores_path.exists():
-            print(f"⚠️  WARNING: Scores exist but report_weekly failed. Logging ERROR_POST_SCORES to weeks_log.")
-            log_error_week(
-                week_end=args.week_end,
-                error_type="ERROR_POST_SCORES",
-                regime=args.regime,
-                scores_path=scores_path,
-                exception=e
-            )
-        raise  # Re-raise to still fail the pipeline
-
-    # 7) Export basket
-    sh([
-        py, "-m", "src.export_basket",
-        "--week_end", args.week_end,
-        "--regime", args.regime,
-        "--schema", args.schema,
-        "--skip_low_info"
-        # top_n now comes from CONFIG.yaml
-    ])
-
-    # 8) Trader sheet
-    sh([
-        py, "-m", "src.trader_sheet",
-        "--week_end", args.week_end,
-        "--regime", args.regime,
-        "--schema", args.schema
-    ])
 
     # 9) Log week decision
-    sh([
-        py, "-m", "src.log_week_decision",
-        "--week_end", args.week_end
-    ])
+    if stage_enabled("log"):
+        sh([
+            py, "-m", "src.log_week_decision",
+            "--week_end", args.week_end
+        ])
 
     # 10) Backtest (optional, skipped for single week runs)
     # The backtest requires --from_week_end and --to_week_end for multi-week backtests

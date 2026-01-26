@@ -2,7 +2,7 @@ name: Weekly Market Pressure Scan
 
 on:
   schedule:
-    - cron: "5 21 * * 5"  # 4:05pm ET (Fridays at 21:05 UTC during EST)
+    - cron: '30 13 * * 5' # Fridays 8:30am ET
   workflow_dispatch:
     inputs:
       week_end:
@@ -22,80 +22,23 @@ concurrency:
   group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
   cancel-in-progress: ${{ github.event_name == 'schedule' }}
 
+
+
 jobs:
-  run-pipeline:
+  build_artifacts:
     runs-on: ubuntu-latest
+    env:
+      CACHE_VERSION: v1
     outputs:
       week_end: ${{ steps.week_end.outputs.week_end }}
-    permissions:
-      contents: read
-      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Echo commit SHA
-        run: |
-          echo "GIT_SHA=$(git rev-parse HEAD)"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Guard - only proceed at 4:05pm ET (scheduled only)
-        run: |
-          python - <<'PY'
-          import datetime as dt
-          from zoneinfo import ZoneInfo
-          import os
-
-          event = os.environ.get("GITHUB_EVENT_NAME", "")
-          
-          # Only enforce time guard for scheduled runs
-          if event == "schedule":
-              now = dt.datetime.now(ZoneInfo("America/New_York"))
-              if not (now.weekday() == 4 and now.hour == 16 and now.minute == 5):
-                  print(f"Not 4:05pm ET Friday (now={now}). Exiting successfully.")
-                  raise SystemExit(0)
-              print(f"Guard passed for scheduled run: now={now}")
-          else:
-              print(f"Manual run (event={event}), bypassing time guard. Proceeding.")
-          PY
-        env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Build stamp
-        run: |
-          echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_ENV
-          echo "RUN_ATTEMPT=${{ github.run_attempt }}" >> $GITHUB_ENV
-          echo "RUN_TRIGGER=${{ github.event_name }}" >> $GITHUB_ENV
-          echo "WEEK_END_REQUESTED=${{ github.event.inputs.week_end }}" >> $GITHUB_ENV
-          echo "RUN_STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-
-      - name: Verify required secrets present
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
-          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
-          echo "✓ Required secrets present"
-
-      - name: Universe sanity check
-        run: |
-          echo "UNIVERSE PATH: sp500_universe.csv"
-          wc -l sp500_universe.csv
-          echo "---"
-          head -5 sp500_universe.csv
-          echo "..."
-          tail -3 sp500_universe.csv
 
       - name: Determine week_end
         id: week_end
@@ -103,9 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           WEEK_END="${{ github.event.inputs.week_end }}"
-          
           if [ -z "$WEEK_END" ]; then
-            # Auto-compute: today if Friday else last Friday (ET)
             WEEK_END=$(python - <<'PY'
           import datetime as dt
           from zoneinfo import ZoneInfo
@@ -119,52 +60,182 @@ jobs:
           PY
           )
           fi
-          
-          # Validate week_end format (strict ISO date check)
           python - <<PY
           import sys, datetime as dt
-          s = "${WEEK_END}"
+          s = "$WEEK_END"
           try:
               dt.date.fromisoformat(s)
-          except Exception as e:
+          except Exception:
               print(f"Invalid week_end: {s!r} (expected YYYY-MM-DD)", file=sys.stderr)
               sys.exit(2)
           PY
-          
-          # Write to workspace root for Python scripts
           echo "$WEEK_END" > "$GITHUB_WORKSPACE/week_end.txt"
-          
-          # Set outputs for workflow steps and job outputs
           echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
           echo "✓ Week ending: $WEEK_END"
 
-      - name: Run weekly pipeline
+      - name: Restore upstream artifacts cache
+        id: cache-upstream-restore
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/derived/market_daily
+            data/derived/company_news
+            data/derived/news_clusters
+            data/derived/rep_enriched
+            data/derived/features_weekly
+          key: upstream-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            upstream-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+            upstream-${{ steps.week_end.outputs.week_end }}-
+
+      - name: Verify required secrets present
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
+          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
+          echo "✓ Required secrets present"
+
+      - name: Run candles/news/cluster/enrich
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
+          python -m src.ingest_market_candles --week_end "$WEEK_END"
+          python -m src.ingest_company_news --week_end "$WEEK_END"
+          python -m src.cluster_news --week_end "$WEEK_END"
+          python -m src.enrich_reps_openai --week_end "$WEEK_END"
+
+      - name: Save upstream artifacts cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/derived/market_daily
+            data/derived/company_news
+            data/derived/news_clusters
+            data/derived/rep_enriched
+            data/derived/features_weekly
+          key: upstream-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+
+  score:
+    runs-on: ubuntu-latest
+    needs: build_artifacts
+    env:
+      CACHE_VERSION: v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore upstream artifacts cache
+        id: cache-upstream-restore
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/derived/market_daily
+            data/derived/company_news
+            data/derived/news_clusters
+            data/derived/rep_enriched
+            data/derived/features_weekly
+          key: upstream-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            upstream-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+            upstream-${{ needs.build_artifacts.outputs.week_end }}-
+
+      - name: Restore scores cache
+        id: cache-scores-restore
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/derived/scores_weekly
+          key: scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-
+            scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+
+      - name: Verify required secrets present
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
+          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
+          echo "✓ Required secrets present"
+
+      - name: Run features_scores and trader sheet
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          WEEK_END="${{ needs.build_artifacts.outputs.week_end }}"
           REGIME="${{ github.event.inputs.regime || 'news-novelty-v1' }}"
           SCHEMA="${{ github.event.inputs.schema || 'news-novelty-v1b' }}"
-          echo "Running pipeline: week_end=$WEEK_END regime=$REGIME schema=$SCHEMA"
-          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA" --max_clusters_per_symbol 1 --skip_backtest
-          python -m src.update_weekly_pnl --week_end "$WEEK_END"
-          python -m src.scoreboard
+          python -m src.features_scores --universe sp500_universe.csv --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
           python -m src.trader_sheet --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
-          python -m src.log_week_decision --week_end "$WEEK_END"
 
-      - name: Rescore (schema v1)
+      - name: Save scores cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/derived/scores_weekly
+          key: scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-${{ env.CACHE_VERSION }}
+
+  compare:
+    runs-on: ubuntu-latest
+    needs: score
+    env:
+      CACHE_VERSION: v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore upstream artifacts cache
+        id: cache-upstream-restore
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/derived/market_daily
+            data/derived/company_news
+            data/derived/news_clusters
+            data/derived/rep_enriched
+            data/derived/features_weekly
+          key: upstream-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            upstream-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+            upstream-${{ needs.score.outputs.week_end }}-
+
+      - name: Restore scores cache
+        id: cache-scores-restore
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/derived/scores_weekly
+          key: scores-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            scores-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-
+            scores-${{ needs.score.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
+
+      - name: Run rescore and compare
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          WEEK_END="${{ steps.week_end.outputs.week_end }}"
+          WEEK_END="${{ needs.score.outputs.week_end }}"
           python -m src.rescore_week --week_end "$WEEK_END" --regime news-novelty-v1 --schema news-novelty-v1 --offline
-
-      - name: Rescore (schema v1b)
-        run: |
-          WEEK_END="${{ steps.week_end.outputs.week_end }}"
           python -m src.rescore_week --week_end "$WEEK_END" --regime news-novelty-v1 --schema news-novelty-v1b --offline
-
-      - name: Compare schemas
-        run: |
           python -u src/compare_schemas_run.py
 
       - name: Rebuild weeks log (full)
