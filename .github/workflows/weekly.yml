@@ -151,7 +151,7 @@ jobs:
           python -m src.run_weekly_pipeline --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA" --max_clusters_per_symbol 1 --skip_backtest
           python -m src.update_weekly_pnl --week_end "$WEEK_END"
           python -m src.scoreboard
-          python -m src.trader_sheet --week_end "$WEEK_END"
+          python -m src.trader_sheet --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
           python -m src.log_week_decision --week_end "$WEEK_END"
 
       - name: Rescore (schema v1)

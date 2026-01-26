@@ -51,12 +51,12 @@ def default_paths(regime: str, schema: str) -> Paths:
 
 def load_week(paths: Paths, week_end: str, regime: str, schema: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     # Try regime+schema-specific path first (new format)
-    scores_p = paths.scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
-    feats_p  = paths.features_dir / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet"
+        scores_p = paths.scores_dir / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet"
+        feats_p  = paths.features_dir / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "features_weekly.parquet"
 
     # Fallbacks for scores: regime-only, then legacy
     if not scores_p.exists():
-        scores_p_regime = paths.derived / "scores_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "scores_weekly.parquet"
+            scores_p_regime = paths.derived / "scores_weekly" / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet"
         if scores_p_regime.exists():
             scores_p = scores_p_regime
         else:
@@ -66,7 +66,7 @@ def load_week(paths: Paths, week_end: str, regime: str, schema: str) -> Tuple[pd
 
     # Fallbacks for features: regime-only, then legacy
     if not feats_p.exists():
-        feats_p_regime = paths.features_dir / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet"
+            feats_p_regime = paths.features_dir / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "features_weekly.parquet"
         if feats_p_regime.exists():
             feats_p = feats_p_regime
         else:

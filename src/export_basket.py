@@ -81,8 +81,8 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
         return out_csv
 
     # Load scores output (try schema-specific path first, then regime-only, then legacy)
-    scores_path_schema = Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
-    scores_path_regime = Path(f"data/derived/scores_weekly/regime={regime}/week_ending={week_end}/scores_weekly.parquet")
+        scores_path_schema = Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
+        scores_path_regime = Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
     scores_path_legacy = Path(f"data/derived/scores_weekly/week_ending={week_end}/scores_weekly.parquet")
 
     if scores_path_schema.exists():
