@@ -165,7 +165,7 @@ def rebuild_weeks_log():
         print(f"\n⚠️  Removed {before_dedup - after_dedup} duplicate week(s)")
     
     # Write to weeks_log.csv with safe quoting
-    log_path = Path("data/live/weeks_log.csv")
+    log_path = Path("data/derived/live/weeks_log.csv")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     
     df.to_csv(log_path, index=False, quoting=csv.QUOTE_ALL)
