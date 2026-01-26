@@ -52,40 +52,38 @@ def rescore_week(
     print(f"   Hash: {schema.content_hash}")
     print(f"   Offline: {offline}")
     
-    # Verify inputs exist
-    rep_enriched_dir = dp.week_dir("rep_enriched", week_end, regime=None)
-    rep_enriched_path = rep_enriched_dir / "rep_enriched.parquet"
+    rep_hash = None
+    rep_enriched_path = None
+
+    if rebuild_features:
+        rep_enriched_dir = dp.week_dir("rep_enriched", week_end, regime=None)
+        rep_enriched_path = rep_enriched_dir / "rep_enriched.parquet"
+        if not rep_enriched_path.exists():
+            raise FileNotFoundError(
+                f"Cannot rebuild features: missing {rep_enriched_path}\n"
+                f"Restore rep_enriched artifacts for this week or disable --rebuild_features"
+            )
+        rep_enriched = pd.read_parquet(rep_enriched_path)
+        rep_hash = hash_dataframe(rep_enriched)
+        print(f"✓ Loaded {len(rep_enriched)} enriched reps (hash: {rep_hash})")
     
-    if not rep_enriched_path.exists():
-        raise FileNotFoundError(
-            f"Cannot rescore offline: missing {rep_enriched_path}\n"
-            f"Run ingestion first or disable --offline"
-        )
-    
-    # Load rep_enriched
-    rep_enriched = pd.read_parquet(rep_enriched_path)
-    rep_hash = hash_dataframe(rep_enriched)
-    print(f"✓ Loaded {len(rep_enriched)} enriched reps (hash: {rep_hash})")
-    
-    # Load or rebuild features
     if rebuild_features:
         print("🔨 Rebuilding features from rep_enriched + candles...")
-        # TODO: Call feature builder here
-        # For now, require features to exist
         raise NotImplementedError("rebuild_features not yet implemented")
     else:
-        features_dir = dp.week_dir("features_weekly", week_end, regime=None)
-        features_path = features_dir / "features_weekly.parquet"
-        
-        if not features_path.exists():
+        # Try regime-namespaced features first (if present), then legacy
+        candidates = []
+        candidates.append(output_base / "features_weekly" / f"regime={schema_id}" / f"week_ending={week_end}" / "features_weekly.parquet")
+        candidates.append(output_base / "features_weekly" / f"week_ending={week_end}" / "features_weekly.parquet")
+        features_path = next((p for p in candidates if p.exists()), None)
+        if features_path is None:
             raise FileNotFoundError(
-                f"Cannot rescore: missing {features_path}\n"
-                f"Run feature generation or use --rebuild_features"
+                "Cannot rescore: missing features_weekly.parquet.\n"
+                "Tried:\n" + "\n".join(str(p) for p in candidates)
             )
-        
         features = pd.read_parquet(features_path)
         feat_hash = hash_dataframe(features)
-        print(f"✓ Loaded {len(features)} features (hash: {feat_hash})")
+        print(f"✓ Loaded {len(features)} features from {features_path} (hash: {feat_hash})")
     
     # Apply schema to compute scores
     print(f"🧮 Applying scoring schema {schema_id}...")
@@ -139,16 +137,30 @@ def apply_scoring_schema(features: pd.DataFrame, schema: ScoringSchema) -> pd.Da
     filters = schema.get_filters()
     
     df = features.copy()
-    
+
+    # --- Legacy feature mapping (backward compatible) ---
+    legacy_map = {
+        "novelty": ["novelty", "NS_raw"],
+        "event_intensity": ["event_intensity", "EI_raw"],
+        "sentiment": ["sentiment", "SS_raw", "sent_5d"],
+        "divergence": ["divergence"],  # legacy weeks have none
+    }
+
+    for target, candidates in legacy_map.items():
+        if target in df.columns:
+            continue
+        for c in candidates:
+            if c in df.columns:
+                df[target] = df[c]
+                break
+        else:
+            # Explicit zero if truly unavailable (e.g., divergence)
+            df[target] = 0.0
+
     # Apply filters
     exclude_types = filters.get("exclude_event_types", [])
     if exclude_types and "event_type_primary" in df.columns:
         df = df[~df["event_type_primary"].isin(exclude_types)]
-    
-    # Ensure scoring columns exist
-    for col in ["novelty", "event_intensity", "sentiment", "divergence"]:
-        if col not in df.columns:
-            df[col] = 0.0
     
     # Normalize to z-scores for fair weighting
     def zscore(s):
