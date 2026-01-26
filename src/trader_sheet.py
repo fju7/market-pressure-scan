@@ -249,18 +249,25 @@ def write_pdf(out_pdf: Path, week_end: str, meta: dict, basket_df: pd.DataFrame)
     print(f"Wrote: {out_pdf}")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--week_end", required=True)
-    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
-    ap.add_argument("--schema", default="news-novelty-v1b", help="Schema ID (e.g., news-novelty-v1, news-novelty-v1b)")
-    args = ap.parse_args()
+from typing import Optional
 
-    week_end = args.week_end
-    schema = args.schema
+class Paths:
+    def __init__(self, regime_id: str, schema_id: str, week_end: str):
+        self.meta_path = Path(f"data/derived/reports/regime={regime_id}/schema={schema_id}/week_ending={week_end}/report_meta.json")
+        self.basket_path = Path(f"data/derived/baskets/regime={regime_id}/schema={schema_id}/week_ending={week_end}/basket.csv")
+        self.out_dir = Path(f"data/derived/trader_sheets/week_ending={week_end}")
+        self.out_pdf = self.out_dir / "trader_sheet.pdf"
+        self.out_csv = self.out_dir / "trader_sheet.csv"
 
-    meta_path = Path(f"data/derived/reports/regime={args.regime}/schema={schema}/week_ending={week_end}/report_meta.json")
-    basket_path = Path(f"data/derived/baskets/regime={args.regime}/schema={schema}/week_ending={week_end}/basket.csv")
+def default_paths(regime_id: str, schema_id: str, week_end: str) -> Paths:
+    return Paths(regime_id, schema_id, week_end)
+
+def run(week_end: str, regime_id: str, schema_id: str, paths: Optional[Paths] = None):
+    if paths is None:
+        paths = default_paths(regime_id, schema_id, week_end)
+
+    meta_path = paths.meta_path
+    basket_path = paths.basket_path
 
     # Fallback to legacy paths if not found
     if not meta_path.exists():
@@ -276,14 +283,22 @@ def main():
     meta = _read_json(meta_path)
     basket_df = pd.read_csv(basket_path)
 
-    out_dir = Path(f"data/derived/trader_sheets/week_ending={week_end}")
-    out_pdf = out_dir / "trader_sheet.pdf"
-    out_csv = out_dir / "trader_sheet.csv"
+    out_dir = paths.out_dir
+    out_pdf = paths.out_pdf
+    out_csv = paths.out_csv
 
     write_pdf(out_pdf, week_end, meta, basket_df)
     write_csv(out_csv, week_end, meta, basket_df)
     print(f"Wrote: {out_csv}")
 
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--week_end", required=True)
+    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    ap.add_argument("--schema", default="news-novelty-v1b", help="Schema ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    args = ap.parse_args()
+
+    run(week_end=args.week_end, regime_id=args.regime, schema_id=args.schema)
 
 if __name__ == "__main__":
     main()

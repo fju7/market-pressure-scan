@@ -905,13 +905,19 @@ def compute_scores(
 # Main
 # ----------------------------
 
+from typing import Optional
+
 def run(
     universe_csv: Path,
     week_end: str,
     lookback_weeks: int = 12,
     regime_id: str = "news-novelty-v1",
-    schema_id: Optional[str] = None,
+    schema_id: str = "news-novelty-v1b",
+    paths: Optional[Paths] = None,
 ):
+
+    if paths is None:
+        paths = default_paths(regime_id=regime_id, schema_id=schema_id)
     # Schema selection logic: args.schema > regime config default_schema > fallback
     import yaml
     regime_cfg_path = Path("config/regimes") / f"{regime_id}.yaml"
@@ -932,7 +938,7 @@ def run(
     print(f"   Weights: {schema.get_weights()}")
     print(f"   Skip rules: {schema.get_skip_rules()}")
 
-    paths = default_paths(regime_id=regime_id)
+
     week_end_et = parse_week_end(week_end)
 
     universe = load_universe(universe_csv)
@@ -1078,20 +1084,27 @@ if __name__ == "__main__":
     print(f"   Regime: {args.regime}")
     print(f"   Schema: {args.schema}")
 
-    paths = default_paths(args.regime, schema_id=args.schema)
+    paths = default_paths(regime_id=args.regime, schema_id=args.schema)
     run(
         Path(args.universe),
         args.week_end,
         lookback_weeks=args.lookback_weeks,
-        paths=paths,
+        regime_id=args.regime,
         schema_id=args.schema,
+        paths=paths,
     )
 
     # Optional legacy compat copy
     week_end = args.week_end
-    score_path = paths.out_scores_dir / f"week_ending={week_end}" / "scores_weekly.parquet"
+
+    # NEW canonical location (regime+schema+week_ending)
+    new_dir = paths.out_scores_dir / f"week_ending={week_end}"
+    new_score_path = new_dir / "scores_weekly.parquet"
+
+    # Legacy location (regime-only, no schema)
     legacy_dir = Path("data/derived/scores_weekly") / f"regime={args.regime}" / f"week_ending={week_end}"
     legacy_dir.mkdir(parents=True, exist_ok=True)
     legacy_path = legacy_dir / "scores_weekly.parquet"
-    if not legacy_path.exists() and score_path.exists():
-        shutil.copy2(score_path, legacy_path)
+
+    if new_score_path.exists() and not legacy_path.exists():
+        shutil.copy2(new_score_path, legacy_path)
