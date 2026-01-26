@@ -4,7 +4,7 @@ from src.io_atomic import write_parquet_atomic
 
 import argparse
 import hashlib
-from src.reuse import should_skip
+from .reuse import should_skip
 from src.io_atomic import write_parquet_atomic
 import json
 import os

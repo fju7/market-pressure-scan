@@ -933,7 +933,7 @@ def run(
     # Output path for skip logic
     out_score_dir = paths.out_scores_dir / f"week_ending={week_end}"
     score_path = out_score_dir / "scores_weekly.parquet"
-    from src.reuse import should_skip
+    from .reuse import should_skip
     if should_skip(score_path, force):
         print(f"SKIP: {score_path} exists and --force not set.")
         return

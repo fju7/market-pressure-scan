@@ -4,7 +4,7 @@ Stores results in data/derived/market_daily/candles_daily.parquet
 """
 
 import argparse
-from src.reuse import should_skip
+from .reuse import should_skip
 import os
 import time
 from datetime import datetime, timedelta

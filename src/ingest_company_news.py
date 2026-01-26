@@ -4,7 +4,7 @@ Stores results in data/derived/company_news/week_ending=YYYY-MM-DD/company_news.
 """
 
 import argparse
-from src.reuse import should_skip
+from .reuse import should_skip
 import os
 import random
 import sys

@@ -9,7 +9,7 @@ from __future__ import annotations
 from src.io_atomic import write_parquet_atomic
 
 import argparse
-from src.reuse import should_skip
+from .reuse import should_skip
 import hashlib
 import re
 from dataclasses import dataclass
