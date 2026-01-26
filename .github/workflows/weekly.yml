@@ -36,6 +36,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug import + repo contents
+        run: |
+          set -euo pipefail
+          pwd
+          echo "=== repo root ==="
+          ls -la
+          echo "=== src listing ==="
+          ls -la src || true
+          echo "=== find reuse* ==="
+          find src -maxdepth 2 -print | sed -n '1,200p'
+          echo "=== python import test ==="
+          python - <<'PY'
+          import importlib, sys
+          print("sys.path[0:5] =", sys.path[:5])
+          import src
+          print("src file =", getattr(src, "__file__", None))
+          try:
+              import src.reuse
+              print("src.reuse file =", src.reuse.__file__)
+          except Exception as e:
+              print("IMPORT src.reuse FAILED:", repr(e))
+              raise
+          PY
+
       - name: Debug src tree
         run: |
           pwd
