@@ -1,3 +1,4 @@
+          python -m src.trader_sheet --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
 name: Weekly Market Pressure Scan
 
 on:
@@ -13,6 +14,10 @@ on:
         description: "Regime ID (e.g., news-novelty-v1, news-novelty-v1b)"
         required: false
         default: "news-novelty-v1"
+      schema:
+        description: "Scoring schema ID (e.g., news-novelty-v1, news-novelty-v1b)"
+        required: false
+        default: "news-novelty-v1b"
 
 concurrency:
   group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
@@ -137,11 +142,27 @@ jobs:
         run: |
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
           REGIME="${{ github.event.inputs.regime || 'news-novelty-v1' }}"
-          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --regime "$REGIME" --max_clusters_per_symbol 1 --skip_backtest
+          SCHEMA="${{ github.event.inputs.schema || 'news-novelty-v1b' }}"
+          echo "Running pipeline: week_end=$WEEK_END regime=$REGIME schema=$SCHEMA"
+          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA" --max_clusters_per_symbol 1 --skip_backtest
           python -m src.update_weekly_pnl --week_end "$WEEK_END"
           python -m src.scoreboard
           python -m src.trader_sheet --week_end "$WEEK_END"
           python -m src.log_week_decision --week_end "$WEEK_END"
+
+      - name: Rescore (schema v1)
+        run: |
+          WEEK_END="${{ steps.week_end.outputs.week_end }}"
+          python -m src.rescore_week --week_end "$WEEK_END" --regime news-novelty-v1 --schema news-novelty-v1 --offline
+
+      - name: Rescore (schema v1b)
+        run: |
+          WEEK_END="${{ steps.week_end.outputs.week_end }}"
+          python -m src.rescore_week --week_end "$WEEK_END" --regime news-novelty-v1 --schema news-novelty-v1b --offline
+
+      - name: Compare schemas
+        run: |
+          python -u src/compare_schemas_run.py
 
       - name: Rebuild weeks log (full)
         run: |
@@ -168,6 +189,7 @@ jobs:
             data/derived/scores_weekly/schema=*/week_ending=${{ steps.week_end.outputs.week_end }}/
             data/derived/features_weekly/week_ending=${{ steps.week_end.outputs.week_end }}/
             data/derived/features_weekly/regime=*/week_ending=${{ steps.week_end.outputs.week_end }}/
+            data/derived/analysis/
 
       - name: Create notification issue
         if: always()

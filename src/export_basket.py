@@ -54,7 +54,8 @@ def compute_conviction(ups_adj: float) -> str:
     return "Strong"
 
 
-def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-novelty-v1", equal_weight: bool = True) -> Path:
+
+def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-novelty-v1", schema: str = "default", equal_weight: bool = True) -> Path:
     meta_path = Path(f"data/derived/reports/week_ending={week_end}/report_meta.json")
     if not meta_path.exists():
         raise FileNotFoundError(f"Missing report meta: {meta_path}. Run report_weekly first.")
@@ -72,22 +73,29 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
             "week_ending_date": week_end,
             "action": "SKIP",
             "reason": "; ".join(meta.get("low_info_reasons", []))[:500],
+            "regime": regime,
+            "schema": schema,
         }])
         df.to_csv(out_csv, index=False, quoting=1)  # QUOTE_MINIMAL
         print(f"Wrote: {out_csv} (SKIP)")
         return out_csv
 
-    # Load scores output (try regime-specific path first, fall back to legacy)
-    scores_path = Path(f"data/derived/scores_weekly/regime={regime}/week_ending={week_end}/scores_weekly.parquet")
-    if not scores_path.exists():
-        scores_path_legacy = Path(f"data/derived/scores_weekly/week_ending={week_end}/scores_weekly.parquet")
-        if scores_path_legacy.exists():
-            scores_path = scores_path_legacy
-        else:
-            raise FileNotFoundError(
-                f"Missing scores parquet for week {week_end}. "
-                f"Expected: {scores_path} or {scores_path_legacy}"
-            )
+    # Load scores output (try schema-specific path first, then regime-only, then legacy)
+    scores_path_schema = Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
+    scores_path_regime = Path(f"data/derived/scores_weekly/regime={regime}/week_ending={week_end}/scores_weekly.parquet")
+    scores_path_legacy = Path(f"data/derived/scores_weekly/week_ending={week_end}/scores_weekly.parquet")
+
+    if scores_path_schema.exists():
+        scores_path = scores_path_schema
+    elif scores_path_regime.exists():
+        scores_path = scores_path_regime
+    elif scores_path_legacy.exists():
+        scores_path = scores_path_legacy
+    else:
+        raise FileNotFoundError(
+            f"Missing scores parquet for week {week_end}. "
+            f"Expected: {scores_path_schema}, {scores_path_regime}, or {scores_path_legacy}"
+        )
 
     df = pd.read_parquet(scores_path).copy()
     if "symbol" not in df.columns or "UPS_adj" not in df.columns:
@@ -123,6 +131,8 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
         "drivers": df["drivers"],
         "signal_state": df["signal_state"],
         "weight": df["weight"],
+        "regime": regime,
+        "schema": schema,
     })
 
     out.to_csv(out_csv, index=False)
@@ -134,11 +144,12 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--week_end", required=True)
     ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    ap.add_argument("--schema", default="news-novelty-v1b", help="Scoring schema (e.g., default, tuned, news-novelty-v1b, etc.)")
     ap.add_argument("--top_n", type=int, default=None, help="Basket size (default: from CONFIG.yaml)")
     ap.add_argument("--skip_low_info", action="store_true")
     args = ap.parse_args()
 
     # Use config default if not specified
     top_n = args.top_n if args.top_n is not None else config.get_basket_size()
-    
-    run(args.week_end, top_n=top_n, skip_low_info=args.skip_low_info, regime=args.regime)
+
+    run(args.week_end, top_n=top_n, skip_low_info=args.skip_low_info, regime=args.regime, schema=args.schema)

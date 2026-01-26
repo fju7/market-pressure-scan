@@ -83,6 +83,11 @@ def main():
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
     ap.add_argument("--universe", default="sp500_universe.csv")
     ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    ap.add_argument(
+        "--schema",
+        default="news-novelty-v1b",
+        help="Scoring schema ID (e.g., news-novelty-v1, news-novelty-v1b)"
+    )
     ap.add_argument("--max_clusters_per_symbol", type=int, default=None, 
                     help="Max clusters per symbol (default: from CONFIG.yaml)")
     ap.add_argument("--skip_backtest", action="store_true")
@@ -129,6 +134,7 @@ def main():
     
     print(f"\n🔒 Experiment: {config.get_experiment_name()} v{config.get_experiment_version()}")
     print(f"   Regime: {args.regime}")
+    print(f"   Schema: {args.schema}")
     print(f"   Max clusters/symbol: {max_clusters}")
     print(f"   Basket size: {config.get_basket_size()}")
     print(f"   Skip rules: {'ENABLED' if config.get_skip_rules_enabled() else 'DISABLED'}\n")
@@ -167,7 +173,8 @@ def main():
         py, "-m", "src.features_scores",
         "--universe", args.universe,
         "--week_end", args.week_end,
-        "--regime", args.regime
+        "--regime", args.regime,
+        "--schema", args.schema
     ])
 
     # 6) Weekly report (with error fallback)
@@ -175,11 +182,15 @@ def main():
         sh([
             py, "-m", "src.report_weekly",
             "--week_end", args.week_end,
-            "--regime", args.regime
+            "--regime", args.regime,
+            "--schema", args.schema
         ])
     except subprocess.CalledProcessError as e:
         # If scores exist but report fails, log it to prevent silent week loss
-        scores_path = Path(f"data/derived/scores_weekly/regime={args.regime}/week_ending={args.week_end}/scores_weekly.parquet")
+        scores_path = Path(
+            f"data/derived/scores_weekly/regime={args.regime}/schema={args.schema}/"
+            f"week_ending={args.week_end}/scores_weekly.parquet"
+        )
         if scores_path.exists():
             print(f"⚠️  WARNING: Scores exist but report_weekly failed. Logging ERROR_POST_SCORES to weeks_log.")
             log_error_week(
@@ -196,6 +207,7 @@ def main():
         py, "-m", "src.export_basket",
         "--week_end", args.week_end,
         "--regime", args.regime,
+        "--schema", args.schema,
         "--skip_low_info"
         # top_n now comes from CONFIG.yaml
     ])
@@ -204,7 +216,8 @@ def main():
     sh([
         py, "-m", "src.trader_sheet",
         "--week_end", args.week_end,
-        "--regime", args.regime
+        "--regime", args.regime,
+        "--schema", args.schema
     ])
 
     # 9) Log week decision

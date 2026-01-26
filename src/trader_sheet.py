@@ -32,6 +32,8 @@ def write_csv(out_csv: Path, week_end: str, meta: dict, basket_df: pd.DataFrame)
     rows = []
     rows.append(["week_ending_date", week_end])
     rows.append(["generated_utc", datetime.utcnow().isoformat() + "Z"])
+    rows.append(["regime", meta.get("regime", "")])
+    rows.append(["schema", meta.get("schema", "")])
     rows.append(["is_low_information_week", str(meta.get("is_low_information_week", False))])
     rows.append(["recap_pct", str(meta.get("recap_pct", ""))])
     rows.append(["avg_novelty_z", str(meta.get("avg_novelty_z", ""))])
@@ -94,6 +96,8 @@ def write_pdf(out_pdf: Path, week_end: str, meta: dict, basket_df: pd.DataFrame)
     y -= 16
 
     c.setFont("Helvetica", 10)
+    c.drawString(left, y, f"Regime: {meta.get('regime','')}  Schema: {meta.get('schema','')}")
+    y -= line
     c.drawString(left, y, f"Low-information week: {'YES (SKIP)' if is_low else 'NO'}")
     y -= line
 
@@ -248,13 +252,21 @@ def write_pdf(out_pdf: Path, week_end: str, meta: dict, basket_df: pd.DataFrame)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--week_end", required=True)
-    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (for future use)")
+    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
+    ap.add_argument("--schema", default="news-novelty-v1b", help="Schema ID (e.g., news-novelty-v1, news-novelty-v1b)")
     args = ap.parse_args()
 
     week_end = args.week_end
+    schema = args.schema
 
-    meta_path = Path(f"data/derived/reports/week_ending={week_end}/report_meta.json")
-    basket_path = Path(f"data/derived/baskets/week_ending={week_end}/basket.csv")
+    meta_path = Path(f"data/derived/reports/regime={args.regime}/schema={schema}/week_ending={week_end}/report_meta.json")
+    basket_path = Path(f"data/derived/baskets/regime={args.regime}/schema={schema}/week_ending={week_end}/basket.csv")
+
+    # Fallback to legacy paths if not found
+    if not meta_path.exists():
+        meta_path = Path(f"data/derived/reports/week_ending={week_end}/report_meta.json")
+    if not basket_path.exists():
+        basket_path = Path(f"data/derived/baskets/week_ending={week_end}/basket.csv")
 
     if not meta_path.exists():
         raise FileNotFoundError(f"Missing: {meta_path} (run report_weekly first)")
