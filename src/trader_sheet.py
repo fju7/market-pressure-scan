@@ -248,7 +248,7 @@ def write_pdf(out_pdf: Path, week_end: str, meta: dict, basket_df: pd.DataFrame)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--week_end", required=True)
-    ap.add_argument("--regime", default=\"news-novelty-v1\", help=\"Regime ID (for future use)\")
+    ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (for future use)")
     args = ap.parse_args()
 
     week_end = args.week_end
