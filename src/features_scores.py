@@ -19,7 +19,6 @@ import pandas as pd
 from dateutil import tz
 
 # Regime system imports
-from src.derived_paths import DerivedPaths
 from src.scoring_schema import load_schema, write_schema_provenance
 from src.io_atomic import write_parquet_atomic
 
@@ -914,8 +913,10 @@ def run(
     regime_id: str = "news-novelty-v1",
     schema_id: str = "news-novelty-v1b",
     paths: Optional[Paths] = None,
+    force: bool = False,
 ):
 
+    _debug_env_stamp()
     if paths is None:
         paths = default_paths(regime_id=regime_id, schema_id=schema_id)
     # Schema selection logic: args.schema > regime config default_schema > fallback
@@ -973,12 +974,13 @@ def run(
     print("📊 SCORING SELF-CHECK")
     print("="*60)
 
-    # Check for NaN features
-    scoring_features = ["NV", "NA", "NS", "SS", "EI", "EC", "AR5", "VS_raw", "RV60"]
+
+    # Check for NaN in key score columns
+    scoring_features = ["NV", "NA", "NS", "SS", "EVS", "UPS_adj", "DPS_adj", "VR_pct"]
     nan_pcts = {}
     for feat in scoring_features:
-        if feat in features.columns:
-            nan_pct = features[feat].isna().sum() / len(features) * 100
+        if feat in scores.columns:
+            nan_pct = scores[feat].isna().sum() / len(scores) * 100
             nan_pcts[feat] = nan_pct
 
     # Show top 10 worst NaN offenders
@@ -1092,6 +1094,7 @@ if __name__ == "__main__":
         regime_id=args.regime,
         schema_id=args.schema,
         paths=paths,
+        force=args.force,
     )
 
     # Optional legacy compat copy
