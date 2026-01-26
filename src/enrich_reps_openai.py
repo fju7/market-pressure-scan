@@ -329,7 +329,7 @@ def run(
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser("Enrich representative clusters with embeddings + OpenAI sentiment/event classification")
     ap.add_argument("--week_end", required=True)
     ap.add_argument("--clusters", default=None)
     ap.add_argument("--out", default=None)
