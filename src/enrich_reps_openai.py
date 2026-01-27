@@ -328,9 +328,12 @@ def run(
     return out_parquet
 
 
+import os
+from src.run_context import get_week_end, enforce_match
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser("Enrich representative clusters with embeddings + OpenAI sentiment/event classification")
-    ap.add_argument("--week_end", required=True)
+    ap.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
     ap.add_argument("--clusters", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--emb_model", default="text-embedding-3-small")
@@ -342,11 +345,15 @@ if __name__ == "__main__":
     ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
 
-    clusters = args.clusters or f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
-    outp = args.out or f"data/derived/rep_enriched/week_ending={args.week_end}/rep_enriched.parquet"
+    week_end = os.getenv("WEEK_END") or args.week_end
+    canonical = get_week_end(week_end)
+    enforce_match(week_end, canonical)
+
+    clusters = args.clusters or f"data/derived/news_clusters/week_ending={canonical.isoformat()}/clusters.parquet"
+    outp = args.out or f"data/derived/rep_enriched/week_ending={canonical.isoformat()}/rep_enriched.parquet"
 
     run(
-        week_end=args.week_end,
+        week_end=canonical.isoformat(),
         clusters_parquet=Path(clusters),
         out_parquet=Path(outp),
         emb_model=args.emb_model,
