@@ -1,4 +1,3 @@
-
 """
 Clusters company news articles by symbol and content similarity.
 
@@ -6,22 +5,22 @@ Input:  data/derived/company_news/week_ending=<W>/company_news.parquet
 Output: data/derived/news_clusters/week_ending=<W>/clusters.parquet
 """
 from __future__ import annotations
-from src.io_atomic import write_parquet_atomic
 
 import argparse
-from .reuse import should_skip
 import hashlib
 import re
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set
 
 import numpy as np
 import pandas as pd
 
+from .io_atomic import write_parquet_atomic
+from .reuse import should_skip
+from .run_context import get_week_end, enforce_match
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
 STOPWORDS = {
     "the","a","an","and","or","but","if","then","else","when","while","to","of","in","on","for","with","at","by",
     "from","as","is","are","was","were","be","been","being","it","its","this","that","these","those","will","may",
@@ -32,7 +31,6 @@ STOPWORDS = {
 def normalize_text(headline: str, summary: str) -> str:
     h = (headline or "").strip()
     s = (summary or "").strip()
-    # Keep headline heavily weighted
     return f"{h}. {s}".strip()
 
 def tokenize(text: str) -> List[str]:
@@ -48,71 +46,72 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
         return 1.0
     if not a or not b:
         return 0.0
-    if __name__ == "__main__":
-        ap = argparse.ArgumentParser("Cluster company news into story clusters (token Jaccard)")
-        ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
-        ap.add_argument("--in", dest="inp", default=None, help="Input parquet (default: derived/company_news for week_end)")
-        ap.add_argument("--out", dest="outp", default=None, help="Output parquet (default: derived/news_clusters for week_end)")
-        ap.add_argument("--jaccard", type=float, default=0.55, help="Jaccard threshold for greedy clustering")
-        ap.add_argument("--max_clusters_per_symbol", type=int, default=2, help="Keep top N clusters per symbol")
-        ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
-        args = ap.parse_args()
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
 
-        inp = Path(args.inp) if args.inp else Path(
-            f"data/derived/company_news/week_ending={args.week_end}/company_news.parquet"
-        )
-        outp = Path(args.outp) if args.outp else Path(
-            f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
-        )
+def stable_cluster_id(symbol: str, rep_headline: str, rep_published_utc: str) -> str:
+    s = f"{symbol}|{rep_published_utc}|{rep_headline}".encode("utf-8", errors="ignore")
+    return hashlib.sha256(s).hexdigest()[:16]
 
-        run(
-            week_end=args.week_end,
-            in_parquet=inp,
-            out_parquet=outp,
-            jaccard_threshold=args.jaccard,
-            max_clusters_per_symbol=args.max_clusters_per_symbol,
-            force=args.force,
-        )
+def run(
+    week_end: str,
+    in_parquet: Path,
+    out_parquet: Path,
+    jaccard_threshold: float = 0.55,
+    max_clusters_per_symbol: int = 2,
+    force: bool = False,
+) -> Path:
+    out_parquet = Path(out_parquet)
+
+    # --- SKIP GUARD ---
+    if should_skip(out_parquet, force):
+        print(f"SKIP: {out_parquet} exists and --force not set.")
         return out_parquet
+
+    if not Path(in_parquet).exists():
+        raise FileNotFoundError(f"Missing input parquet: {in_parquet}")
 
     raw = pd.read_parquet(in_parquet)
 
-    # Expect Finnhub company-news fields; tolerate missing
+    # Tolerate missing cols
     for col in ["symbol","headline","summary","url","source","published_utc","datetime"]:
         if col not in raw.columns:
             raw[col] = None
 
     raw["symbol"] = raw["symbol"].astype(str).str.upper().str.strip()
+
+    # Published time normalization
     if raw["published_utc"].isna().all() and "datetime" in raw.columns:
-        # Finnhub provides epoch seconds in `datetime`
         raw["published_utc"] = pd.to_datetime(raw["datetime"], unit="s", utc=True, errors="coerce")
     raw["published_utc"] = pd.to_datetime(raw["published_utc"], utc=True, errors="coerce")
 
-    # Basic dedupe: url+headline within symbol
+    # Basic normalization
     raw["headline"] = raw["headline"].astype(str).fillna("").str.strip()
-    raw["summary"] = raw["summary"].astype(str).fillna("").str.strip()
-    raw["url"] = raw["url"].astype(str).fillna("").str.strip()
-    raw["source"] = raw["source"].astype(str).fillna("").str.strip()
+    raw["summary"]  = raw["summary"].astype(str).fillna("").str.strip()
+    raw["url"]      = raw["url"].astype(str).fillna("").str.strip()
+    raw["source"]   = raw["source"].astype(str).fillna("").str.strip()
 
+    # Dedupe and sort newest-first within symbol
     raw = raw.drop_duplicates(subset=["symbol","url","headline"], keep="last")
-    raw = raw.sort_values(["symbol","published_utc"], ascending=[True, False])
+    raw = raw.sort_values(["symbol","published_utc"], ascending=[True, False]).reset_index(drop=True)
 
+    clusters_out: List[Dict[str, Any]] = []
 
-    clusters_out = []
-
-    for sym, g in raw.groupby("symbol"):
+    for sym, g in raw.groupby("symbol", sort=False):
         g = g.head(5000).copy()
+        if len(g) == 0:
+            continue
 
-        # Precompute token sets
         g["canon"] = [normalize_text(h, s) for h, s in zip(g["headline"], g["summary"])]
         tok_sets = [token_set(t) for t in g["canon"].tolist()]
 
         assigned = np.zeros(len(g), dtype=bool)
         idxs = list(range(len(g)))
 
-        sym_clusters = []
+        sym_clusters: List[Dict[str, Any]] = []
 
-        # Greedy clustering: pick next unassigned as seed, group similar docs
+        # Greedy clustering
         for i in idxs:
             if assigned[i]:
                 continue
@@ -129,7 +128,7 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
 
             sub = g.iloc[members].copy()
 
-            # Representative: most recent, then longest headline
+            # Representative: most recent
             sub = sub.sort_values(["published_utc"], ascending=False)
             rep = sub.iloc[0]
 
@@ -137,7 +136,7 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
             rep_published_utc = rep_published.isoformat() if pd.notna(rep_published) else ""
 
             rep_head = rep["headline"]
-            rep_sum = rep["summary"]
+            rep_sum  = rep["summary"]
 
             cluster_size = int(len(sub))
             unique_sources = int(sub["source"].nunique(dropna=True))
@@ -157,7 +156,7 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
 
         if sym_clusters:
             sym_df = pd.DataFrame(sym_clusters)
-            sym_df = sym_df.sort_values(["cluster_size", "unique_sources"], ascending=False).head(max_clusters_per_symbol)
+            sym_df = sym_df.sort_values(["cluster_size","unique_sources"], ascending=False).head(max_clusters_per_symbol)
             clusters_out.extend(sym_df.to_dict("records"))
 
     out = pd.DataFrame(clusters_out)
@@ -166,10 +165,7 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
     print(f"Wrote: {out_parquet} ({len(out):,} rows)")
     return out_parquet
 
-
-from src.run_context import get_week_end, enforce_match
-
-if __name__ == "__main__":
+def main() -> None:
     ap = argparse.ArgumentParser("Cluster company news into story clusters (token Jaccard)")
     ap.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
     ap.add_argument("--in", dest="inp", default=None, help="Input parquet (default: derived/company_news for week_end)")
@@ -181,15 +177,19 @@ if __name__ == "__main__":
 
     canonical = get_week_end(args.week_end)
     enforce_match(args.week_end, canonical)
+    week_end_str = canonical.isoformat()
 
-    inp = Path(args.inp) if args.inp else Path(f"data/derived/company_news/week_ending={canonical.isoformat()}/company_news.parquet")
-    outp = Path(args.outp) if args.outp else Path(f"data/derived/news_clusters/week_ending={canonical.isoformat()}/clusters.parquet")
+    inp = Path(args.inp) if args.inp else Path(f"data/derived/company_news/week_ending={week_end_str}/company_news.parquet")
+    outp = Path(args.outp) if args.outp else Path(f"data/derived/news_clusters/week_ending={week_end_str}/clusters.parquet")
 
     run(
-        week_end=canonical.isoformat(),
+        week_end=week_end_str,
         in_parquet=inp,
         out_parquet=outp,
         jaccard_threshold=args.jaccard,
         max_clusters_per_symbol=args.max_clusters_per_symbol,
         force=args.force,
     )
+
+if __name__ == "__main__":
+    main()
