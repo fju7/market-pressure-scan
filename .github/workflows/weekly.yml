@@ -1,38 +1,29 @@
-on:
+name: Weekly Market Pressure Scan
 
 on:
   schedule:
-    - cron: "30 13 * * 5" # Fridays 8:30am ET
+    # 23:35 UTC Fridays.
+    # This is 6:35pm ET during Standard Time and 7:35pm ET during Daylight Time.
+    # We add a NY-local-time guard below so it runs at 6:35pm ET year-round.
+    - cron: "35 23 * * 5"
   workflow_dispatch:
     inputs:
       week_end:
         description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
         required: false
         default: ""
-      regime:
-        description: "Regime ID (e.g., news-novelty-v1, news-novelty-v1b)"
-        required: false
-        default: "news-novelty-v1"
-      schema:
-        description: "Scoring schema ID (e.g., news-novelty-v1, news-novelty-v1b)"
-        required: false
-        default: "news-novelty-v1b"
 
 concurrency:
-  group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}
+  group: market-pressure-scan-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'schedule' }}
 
-
-
-
 jobs:
-
-  build_artifacts:
+  run-pipeline:
     runs-on: ubuntu-latest
-    env:
-      CACHE_VERSION: v1
-    outputs:
-      week_end: ${{ steps.week_end.outputs.week_end }}
+    permissions:
+      contents: read
+      issues: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,69 +32,111 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
+      - name: Guard - only proceed at 6:35pm ET Friday (scheduled only)
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
+          python - <<'PY'
+          import datetime as dt
+          from zoneinfo import ZoneInfo
+          import os
+name: Weekly Market Pressure Scan
+
+on:
+  schedule:
+    # Run at 6:35pm New York time year-round:
+    # - During EDT: 6:35pm ET = 22:35 UTC
+    # - During EST: 6:35pm ET = 23:35 UTC
+    - cron: "35 22 * * 5"
+    - cron: "35 23 * * 5"
+  workflow_dispatch:
+    inputs:
+      week_end:
+        description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
+        required: false
+        default: ""
+
+concurrency:
+  group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    outputs:
+      week_end: ${{ steps.week_end.outputs.week_end }}
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Guard - only proceed at 6:35pm ET Friday (scheduled only)
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          from zoneinfo import ZoneInfo
+          import os
+
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+
+          # Only enforce time guard for scheduled runs
+          if event == "schedule":
+              now = dt.datetime.now(ZoneInfo("America/New_York"))
+              if not (now.weekday() == 4 and now.hour == 18 and now.minute == 35):
+                  print(f"Not 6:35pm ET Friday (now={now}). Exiting successfully.")
+                  raise SystemExit(0)
+              print(f"Guard passed for scheduled run: now={now}")
+          else:
+              print(f"Manual run (event={event}), bypassing time guard. Proceeding.")
+          PY
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Sanity check deps
-        run: |
-          python - <<'PY'
-          import pandas as pd
-          import numpy as np
-          import pyarrow
-          import duckdb
-          import yaml
-          import requests
-          import tqdm
-          print("deps ok:",
-                "pandas", pd.__version__,
-                "| numpy", np.__version__,
-                "| pyarrow", pyarrow.__version__,
-                "| duckdb", duckdb.__version__,
-                "| pyyaml", yaml.__version__)
-          PY
-
-      - name: Debug import + repo contents
+      - name: Build stamp
         run: |
           set -euo pipefail
-          pwd
-          echo "=== repo root ==="
-          ls -la
-          echo "=== src listing ==="
-          ls -la src || true
-          echo "=== find reuse* ==="
-          find src -maxdepth 2 -print | sed -n '1,200p'
-          echo "=== python import test ==="
-          python - <<'PY'
-          import importlib, sys
-      - name: Cache status (derived)
-        run: echo "derived cache-hit=${{ steps.cache-derived-restore.outputs.cache-hit }}"
-          print("sys.path[0:5] =", sys.path[:5])
-          import src
-          print("src file =", getattr(src, "__file__", None))
-          try:
-              import src.reuse
-              print("src.reuse file =", src.reuse.__file__)
-          except Exception as e:
-              print("IMPORT src.reuse FAILED:", repr(e))
-              raise
-          PY
-      - name: Cache status (scores)
-        run: echo "scores cache-hit=${{ steps.cache-scores-restore.outputs.cache-hit }}"
+          echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_ENV
+          echo "RUN_ATTEMPT=${{ github.run_attempt }}" >> $GITHUB_ENV
+          echo "RUN_TRIGGER=${{ github.event_name }}" >> $GITHUB_ENV
+          echo "WEEK_END_REQUESTED=${{ github.event.inputs.week_end }}" >> $GITHUB_ENV
+          echo "RUN_STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
 
-      - name: Debug src tree
+      - name: Verify required secrets present
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          pwd
-          ls -la
-          echo "---- src ----"
-          ls -la src
-          echo "---- find reuse ----"
-          find . -maxdepth 3 -name "reuse.py" -o -name "reuse*"
+          set -euo pipefail
+          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
+          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
+          echo "✓ Required secrets present"
 
+      - name: Universe sanity check
+        run: |
+          set -euo pipefail
+          echo "UNIVERSE PATH: sp500_universe.csv"
+          test -f sp500_universe.csv || (echo "❌ sp500_universe.csv missing at repo root" && exit 1)
+          wc -l sp500_universe.csv
+          echo "---"
+          head -5 sp500_universe.csv
+          echo "..."
+          tail -3 sp500_universe.csv
 
       - name: Determine week_end
         id: week_end
@@ -111,7 +144,9 @@ jobs:
         run: |
           set -euo pipefail
           WEEK_END="${{ github.event.inputs.week_end }}"
+
           if [ -z "$WEEK_END" ]; then
+            # Auto-compute: today if Friday else last Friday (ET)
             WEEK_END=$(python - <<'PY'
           import datetime as dt
           from zoneinfo import ZoneInfo
@@ -125,316 +160,47 @@ jobs:
           PY
           )
           fi
+
+          # Validate week_end format (strict ISO date check)
           python - <<PY
           import sys, datetime as dt
-          s = "$WEEK_END"
+          s = "${WEEK_END}"
           try:
               dt.date.fromisoformat(s)
           except Exception:
               print(f"Invalid week_end: {s!r} (expected YYYY-MM-DD)", file=sys.stderr)
               sys.exit(2)
           PY
+
           echo "$WEEK_END" > "$GITHUB_WORKSPACE/week_end.txt"
           echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
           echo "✓ Week ending: $WEEK_END"
 
-      - name: Restore derived cache
-        id: cache-derived-restore
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/derived/market_daily
-            data/derived/company_news
-            data/derived/news_clusters
-            data/derived/rep_enriched
-            data/derived/features_weekly
-            data/derived/scores_weekly
-          key: derived-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
-          restore-keys: |
-            derived-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-            derived-${{ steps.week_end.outputs.week_end }}-
-
-      - name: Verify required secrets present
+      - name: Run weekly pipeline
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
-          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
-          echo "✓ Required secrets present"
-
-      - name: Debug run_context visibility
-        run: |
           set -euo pipefail
-          echo "=== src directory ==="
-          ls -la src | sed -n '1,200p'
-
-          echo
-          echo "=== Python module discovery ==="
-          python - <<'PY'
-          import pkgutil, src
-          mods = [m.name for m in pkgutil.iter_modules(src.__path__)]
-          print("run_context present:", "run_context" in mods)
-          print("modules:", mods)
-          PY
-
-
-      - name: Debug run_context + sys.path
-        run: |
-          set -euo pipefail
-          echo "PWD=$(pwd)"
-          echo "PYTHONPATH=${PYTHONPATH:-<unset>}"
-          echo "=== src listing ==="
-          ls -la src
-          echo "=== does src/run_context.py exist? ==="
-          if [ -f src/run_context.py ]; then
-            echo "YES: src/run_context.py"
-          else
-            echo "NO: src/run_context.py (this would cause ModuleNotFoundError)"
-          fi
-          echo "=== python import test ==="
-          python - <<'PY'
-          import sys
-          print("sys.executable:", sys.executable)
-          print("sys.version:", sys.version)
-          print("sys.path[0:8]:", sys.path[:8])
-          import src
-          print("src.__file__:", src.__file__)
-          try:
-              import src.run_context as rc
-              print("src.run_context.__file__:", rc.__file__)
-          except Exception as e:
-              print("IMPORT src.run_context FAILED:", repr(e))
-              raise
-          PY
-
-      - name: Run candles/news/cluster/enrich
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
-          export WEEK_END
-          python -m src.ingest_market_candles --universe sp500_universe.csv --week_end "$WEEK_END"
-          python -m src.ingest_company_news  --universe sp500_universe.csv --week_end "$WEEK_END"
-          python -m src.cluster_news --week_end "$WEEK_END"
-          python -m src.enrich_reps_openai --week_end "$WEEK_END"
+          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --max_clusters_per_symbol 1 --skip_backtest
+          python -m src.update_weekly_pnl --week_end "$WEEK_END"
+          python -m src.scoreboard
+          python -m src.trader_sheet --week_end "$WEEK_END"
+          python -m src.log_week_decision --week_end "$WEEK_END"
 
-      - name: Save derived cache (only on miss)
-        if: steps.cache-derived-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            data/derived/market_daily
-            data/derived/company_news
-            data/derived/news_clusters
-            data/derived/rep_enriched
-            data/derived/features_weekly
-            data/derived/scores_weekly
-          key: derived-${{ steps.week_end.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
-
-
-  score:
-    runs-on: ubuntu-latest
-    needs: build_artifacts
-    env:
-      CACHE_VERSION: v1
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: requirements.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Sanity check deps
-        run: |
-          python - <<'PY'
-          import pandas as pd
-          import numpy as np
-          import pyarrow
-          import duckdb
-          import yaml
-          import requests
-          import tqdm
-          print("deps ok:",
-                "pandas", pd.__version__,
-                "| numpy", np.__version__,
-                "| pyarrow", pyarrow.__version__,
-                "| duckdb", duckdb.__version__,
-                "| pyyaml", yaml.__version__)
-          PY
-
-      - name: Restore derived cache
-        id: cache-derived-restore
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/derived/market_daily
-            data/derived/company_news
-            data/derived/news_clusters
-            data/derived/rep_enriched
-            data/derived/features_weekly
-            data/derived/scores_weekly
-          key: derived-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
-          restore-keys: |
-            derived-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-            derived-${{ needs.build_artifacts.outputs.week_end }}-
-
-      - name: Restore scores cache
-        id: cache-scores-restore
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/derived/scores_weekly
-          key: scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-${{ env.CACHE_VERSION }}
-          restore-keys: |
-            scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-
-            scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-
-      - name: Verify required secrets present
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
-          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
-          echo "✓ Required secrets present"
-
-      - name: Run features_scores and trader sheet
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          WEEK_END="${{ needs.build_artifacts.outputs.week_end }}"
-          REGIME="${{ github.event.inputs.regime || 'news-novelty-v1' }}"
-          SCHEMA="${{ github.event.inputs.schema || 'news-novelty-v1b' }}"
-          python - <<'PY'
-          import inspect, src.features_scores as m
-          print("features_scores module:", m.__file__)
-          # print the exact lines around the failing section if you know the line number
-          PY
-          python -m src.features_scores --universe sp500_universe.csv --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
-          python -m src.trader_sheet --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
-
-      - name: Save scores cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            data/derived/scores_weekly
-          key: scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-${{ env.CACHE_VERSION }}
-
-
-  compare:
-    runs-on: ubuntu-latest
-    needs: [build_artifacts, score]
-    env:
-      CACHE_VERSION: v1
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: requirements.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Sanity check deps
-        run: |
-          python - <<'PY'
-          import pandas as pd
-          import numpy as np
-          import pyarrow
-          import duckdb
-          import yaml
-          import requests
-          import tqdm
-          print("deps ok:",
-                "pandas", pd.__version__,
-                "| numpy", np.__version__,
-                "| pyarrow", pyarrow.__version__,
-                "| duckdb", duckdb.__version__,
-                "| pyyaml", yaml.__version__)
-          PY
-
-      - name: Restore derived cache
-        id: cache-derived-restore
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/derived/market_daily
-            data/derived/company_news
-            data/derived/news_clusters
-            data/derived/rep_enriched
-            data/derived/features_weekly
-          key: derived-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ env.CACHE_VERSION }}
-          restore-keys: |
-            derived-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-            derived-${{ needs.build_artifacts.outputs.week_end }}-
-
-      - name: Restore scores cache
-        id: cache-scores-restore
-        uses: actions/cache@v4
-        with:
-          path: |
-            data/derived/scores_weekly
-          key: scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-${{ env.CACHE_VERSION }}
-          restore-keys: |
-            scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}-
-            scores-${{ needs.build_artifacts.outputs.week_end }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-
-
-      - name: Run rescore and compare
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          WEEK_END="${{ needs.build_artifacts.outputs.week_end }}"
-          python -m src.rescore_week --week_end "$WEEK_END" --regime news-novelty-v1 --schema news-novelty-v1 --offline
-          python -m src.rescore_week --week_end "$WEEK_END" --regime news-novelty-v1 --schema news-novelty-v1b --offline
-          python -u src/compare_schemas_run.py
-
-      - name: Rebuild weeks log (full)
-        run: |
-          python -m src.rebuild_weeks_log
-
-      - name: Post-run artifact audit
-        run: |
-          WEEK_END="${{ needs.build_artifacts.outputs.week_end }}"
-          python scripts/audit_artifacts.py --week_end "$WEEK_END"
-
-      - name: Upload week artifacts
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: week_${{ needs.build_artifacts.outputs.week_end }}_run_${{ github.run_id }}
+          name: trader-sheet-and-report
           path: |
             week_end.txt
-            data/live/
-            data/derived/baskets/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/reports/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/trader_sheets/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/scores_weekly/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/scores_weekly/regime=*/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/scores_weekly/schema=*/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/features_weekly/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/features_weekly/regime=*/week_ending=${{ needs.build_artifacts.outputs.week_end }}/
-            data/derived/analysis/
+            data/derived/trader_sheets/**
+            data/derived/reports/**
+            data/derived/baskets/**
+            data/live/scoreboard.csv
+            data/live/weeks_log.csv
 
       - name: Create notification issue
         if: always()
@@ -442,10 +208,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const week_end = '${{ needs.build_artifacts.outputs.week_end }}';
+            const week_end = '${{ steps.week_end.outputs.week_end }}';
             const status = '${{ job.status }}';
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
+
             // Read scoreboard
             let scoreboardSnippet = 'Scoreboard not available';
             try {
@@ -455,19 +221,19 @@ jobs:
             } catch (e) {
               scoreboardSnippet = 'Could not read scoreboard';
             }
-            
+
             // Read basket for action + top symbols (canonical source)
             let actionDecision = 'UNKNOWN';
             let topSymbols = 'Not available';
             let basketSize = 0;
             let overlapPct = null;
             let turnoverPct = null;
-            
+
             try {
               const basketPath = `data/derived/baskets/week_ending=${week_end}/basket.csv`;
               const basketCsv = fs.readFileSync(basketPath, 'utf8').trim();
               const rows = basketCsv.split('\n').filter(r => r.trim().length > 0);
-              
+
               // Parse header to find column indices
               const header = rows[0].split(',');
               const actionIdx = header.indexOf('action');
@@ -475,11 +241,11 @@ jobs:
               const symbolIdx = header.indexOf('symbol');
               const upsIdx = header.indexOf('UPS_adj');
               const convictionIdx = header.indexOf('conviction');
-              
+
               // Parse first data row to read action
               const firstRow = rows[1]?.split(',') || [];
               const action = actionIdx >= 0 ? (firstRow[actionIdx] || '').trim() : '';
-              
+
               if (action === 'SKIP') {
                 actionDecision = '⏸️ SKIP';
                 const reason = reasonIdx >= 0 ? (firstRow[reasonIdx] || '').trim() : 'Low-information week';
@@ -487,11 +253,11 @@ jobs:
                 basketSize = 0;
               } else {
                 actionDecision = '📈 TRADE';
-                
+
                 // Count symbol rows (exclude header)
                 const symbolRows = rows.slice(1).filter(r => r.trim());
                 basketSize = symbolRows.length;
-                
+
                 // Top 5 from file order (already ranked by UPS)
                 const top5 = symbolRows.slice(0, 5).map(r => {
                   const cols = r.split(',');
@@ -500,19 +266,19 @@ jobs:
                   const conviction = convictionIdx >= 0 ? (cols[convictionIdx] || '?').trim() : '?';
                   return `${ticker} (UPS: ${ups}, ${conviction})`;
                 });
-                
+
                 topSymbols = top5.join('\n');
               }
             } catch (e) {
               topSymbols = `Could not read basket: ${e.message}`;
             }
-            
-            // Read weeks_log for turnover metrics
+
+            // Read weeks_log for turnover metrics (optional)
             try {
               const weeksLog = fs.readFileSync('data/live/weeks_log.csv', 'utf8');
               const lines = weeksLog.split('\n');
               const currentWeekLine = lines.find(line => line.includes(week_end));
-              
+
               if (currentWeekLine) {
                 const cols = currentWeekLine.split(',');
                 // Assuming CSV columns: week_ending_date,action,basket_size,overlap_pct,turnover_pct,...
@@ -521,34 +287,34 @@ jobs:
                 turnoverPct = parseFloat(cols[4]);
               }
             } catch (e) {
-              // Weeks log might not exist yet or metric not available
+              // weeks_log might not exist yet
             }
-            
+
             const body = `@fju7 — Your weekly market pressure scan is ready!
-            
+
             ## 📊 Weekly Market Pressure Scan Complete
-            
+
             **Week Ending:** ${week_end}
             **Status:** ${status === 'success' ? '✅ Success' : '❌ Failed'}
             **Basket Size:** ${basketSize}${overlapPct !== null ? `\n**Overlap:** ${overlapPct.toFixed(1)}% | **Turnover:** ${turnoverPct.toFixed(1)}%` : ''}
-            
+
             ### ${actionDecision}
-            
+
             **Top 5 UPS Signals:**
             \`\`\`
             ${topSymbols}
             \`\`\`
-            
+
             ### Quick Stats
             ${scoreboardSnippet}
-            
+
             ### 🔗 Links
             - **[📥 View Run & Download Artifacts](${runUrl})**
             - Artifacts include: Trader Sheet, Weekly Report, Basket, Scoreboard
-            
+
             ---
             *This issue auto-closes in 7 days*`;
-            
+
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -556,17 +322,15 @@ jobs:
               body: body,
               labels: ['weekly-scan', 'automated']
             });
-            
-            // Ensure we have a numeric issue number (not node_id)
+
             const issueNumber = parseInt(issue.data.number, 10);
             if (!issueNumber || isNaN(issueNumber)) {
               throw new Error(`Invalid issue number: ${issue.data.number}`);
             }
-            
-            // Schedule auto-close in 7 days
+
             const closeDate = new Date();
             closeDate.setDate(closeDate.getDate() + 7);
-            
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -581,12 +345,12 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
-            
+
             const cutoffDays = 7;
             const now = new Date();
             let closed = 0;
             let page = 1;
-            
+
             while (true) {
               const res = await github.rest.issues.listForRepo({
                 owner,
@@ -594,42 +358,41 @@ jobs:
                 labels: 'weekly-scan',
                 state: 'open',
                 sort: 'created',
-                direction: 'asc',   // oldest first so we can break early
+                direction: 'asc',
                 per_page: 100,
                 page
               });
-            
+
               if (!res.data || res.data.length === 0) break;
-            
+
               for (const issue of res.data) {
                 const created = new Date(issue.created_at);
                 const daysOld = (now - created) / (1000 * 60 * 60 * 24);
-            
-                // since we're oldest->newest, once we hit a "too new" issue, we can stop entirely
+
                 if (daysOld < cutoffDays) {
                   console.log(`Hit issues newer than cutoff (${daysOld.toFixed(2)}d < ${cutoffDays}d). Stopping.`);
                   console.log(`Closed ${closed} old weekly-scan issue(s).`);
                   return;
                 }
-            
+
                 await github.rest.issues.createComment({
                   owner,
                   repo,
                   issue_number: issue.number,
                   body: `🤖 Auto-closing: this weekly scan issue is ${daysOld.toFixed(1)} days old (>= ${cutoffDays}).`
                 });
-            
+
                 await github.rest.issues.update({
                   owner,
                   repo,
                   issue_number: issue.number,
                   state: 'closed'
                 });
-            
+
                 closed += 1;
               }
-            
+
               page += 1;
             }
-            
+
             console.log(`Closed ${closed} old weekly-scan issue(s).`);
