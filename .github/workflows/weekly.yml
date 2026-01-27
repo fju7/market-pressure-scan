@@ -130,13 +130,14 @@ jobs:
           echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
           echo "✓ Week ending: $WEEK_END"
 
-      - name: Check cluster_news import/run
+      - name: Preflight - import smoke test (cluster_news has run)
         run: |
+          set -euo pipefail
           python - <<'PY'
           import src.cluster_news as m
-          print("cluster_news:", m.__file__)
-          print("has run:", hasattr(m, "run"))
-          assert hasattr(m, "run")
+          print("cluster_news module:", m.__file__)
+          print("hasattr(run):", hasattr(m, "run"))
+          assert hasattr(m, "run"), "src.cluster_news must define run() at module scope"
           PY
 
       - name: Run weekly pipeline
