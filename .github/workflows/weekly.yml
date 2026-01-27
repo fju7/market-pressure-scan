@@ -183,7 +183,6 @@ jobs:
             try {
               const scoreboard = fs.readFileSync('data/live/scoreboard.csv', 'utf8');
               const lines = scoreboard.split('\n').slice(0, 10);
-' + lines.join('\n') + '\n```';
               scoreboardSnippet = "```\n" + lines.join("\n") + "\n```";
             } catch (e) {
               scoreboardSnippet = 'Could not read scoreboard';
