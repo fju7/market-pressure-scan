@@ -136,6 +136,8 @@ jobs:
           python - <<'PY'
           import src.cluster_news as m
           print("cluster_news module:", m.__file__)
+          import inspect
+          print("run source head:", inspect.getsource(m.run).splitlines()[0])
           print("hasattr(run):", hasattr(m, "run"))
           assert hasattr(m, "run"), "src.cluster_news must define run() at module scope"
           PY
