@@ -1,44 +1,50 @@
+
+
 # Copilot Instructions for market-pressure-scan
 
-## Project Overview
-- This repo implements a weekly, news-driven market pressure signal (UPS/DPS) for live and backtest trading.
-- All experiment parameters are locked in `CONFIG.yaml` and must not be changed during the test period.
-- The main workflow is automated, with manual override options for step-by-step control.
+## Project Purpose & Architecture
+- Implements a weekly, news-driven market pressure signal (UPS/DPS) for live and backtest trading.
+- All experiment parameters are **locked** in `CONFIG.yaml` for the entire test period (8-12 weeks). **No tuning allowed.**
+- The workflow is modular and automated, with manual override scripts for debugging or stepwise control.
 
-## Key Workflows
+## Essential Workflows
 - **Weekly Pipeline:**
-  - Run with `python -m src.run_weekly_pipeline --week_end YYYY-MM-DD --skip_backtest`
-  - Or use the full workflow in `src/weekly_workflow.py` (see `LIVE_WORKFLOW.md` for details)
+  - Main: `python -m src.run_weekly_pipeline --week_end YYYY-MM-DD --skip_backtest`
+  - Orchestrated: `src/weekly_workflow.py` automates the full Friday→Monday→Friday cycle (see `LIVE_WORKFLOW.md`).
 - **Live Trading Routine:**
   - One-time setup: `python -m src.init_live_ledger`
-  - Weekly cycle: `python -m src.weekly_workflow --week_end YYYY-MM-DD --mode friday|monday|friday_close`
-  - Manual steps: Use `src/log_week_decision.py`, `src/log_trades.py`, `src/update_weekly_pnl.py` for granular control
+  - Weekly: `python -m src.weekly_workflow --week_end YYYY-MM-DD --mode friday|monday|friday_close`
+  - Manual alternatives: `src/log_week_decision.py`, `src/log_trades.py`, `src/update_weekly_pnl.py`
 - **Performance Analysis:**
-  - Quick view: `python -m src.scoreboard`
-  - Full analysis: `python -m src.analyze_performance`
+  - Quick: `python -m src.scoreboard`
+  - Full: `python -m src.analyze_performance`
 
 ## Data Flow & Structure
 - **Input:**
-  - News, candles, and signals ingested via `src/ingest_company_news.py`, `src/ingest_market_candles.py`
-  - Main pipeline output: `data/derived/reports/`, `data/derived/baskets/`
+  - News: `src/ingest_company_news.py` (Finnhub API, requires `FINNHUB_API_KEY`)
+  - Market candles: `src/ingest_market_candles.py`
+  - Main pipeline outputs: `data/derived/reports/`, `data/derived/baskets/`
 - **Ledgers:**
-  - Trades, P&L, and week decisions logged in `data/live/`
-  - Scoreboard and reports in `data/derived/`
+  - Trades, P&L, and week decisions: `data/live/`
+  - Scoreboard and reports: `data/derived/`
+- **Artifacts:**
+  - All logs are CSV or Markdown. See `LIVE_WORKFLOW.md` for file conventions.
 
-## Conventions & Patterns
-- **No tuning:** Parameters in `CONFIG.yaml` are fixed for the experiment duration.
-- **SKIP logic:** Automated skip-week logic is central; do not override unless manually testing.
-- **Consistent file formats:** All logs are CSV or Markdown; see `LIVE_WORKFLOW.md` for file details.
-- **Modular scripts:** Each major step (ingest, score, log, report) is a separate script in `src/`.
-- **Manual override:** All automated steps have manual script alternatives for debugging or custom runs.
+## Project Conventions & Patterns
+- **No tuning:** Never change `CONFIG.yaml` during a test. All changes = new experiment.
+- **Skip logic:** Automated skip-week logic is central. Do not override unless manually testing/debugging.
+- **Canonical paths:** Use helper functions in `src/derived_paths.py` for artifact locations.
+- **Consistent routines:** All major steps (ingest, cluster, enrich, score, log, report) are separate scripts in `src/`.
+- **Manual override:** Every automated step has a manual script for granular control.
+- **Config snapshotting:** Each report logs the config used for reproducibility (see `report_meta.json`).
 
 ## Integration Points
-- **Finnhub API:** Requires `FINNHUB_API_KEY` (set as env var)
-- **OpenAI API:** For news enrichment, set `OPENAI_API_KEY`
-- **External data:** Price data in `candles_daily.parquet`, news in CSV/JSON formats
+- **Finnhub API:** Set `FINNHUB_API_KEY` in env for news/price ingestion.
+- **OpenAI API:** Set `OPENAI_API_KEY` for news enrichment/classification.
+- **External data:** Price data in `candles_daily.parquet`, news in CSV/JSON.
 
 ## Examples
-- Run full weekly pipeline:
+- Full weekly pipeline:
   ```bash
   python -m src.run_weekly_pipeline --week_end 2026-01-24 --skip_backtest
   ```
@@ -59,7 +65,8 @@
 ---
 
 **For AI agents:**
-- Always follow locked config and experiment protocol.
+- Always follow locked config and experiment protocol. Never change `CONFIG.yaml` during a test.
 - Use the documented workflow unless explicitly instructed otherwise.
 - Reference `LIVE_WORKFLOW.md` for step-by-step routines and file conventions.
-- When in doubt, prefer automation but provide manual alternatives for debugging.
+- Prefer automation, but provide manual alternatives for debugging.
+- When in doubt, check `EXPERIMENT_PROTOCOL.md` for scientific rationale and drift prevention.

@@ -292,13 +292,18 @@ def run(week_end: str, regime_id: str, schema_id: str, paths: Optional[Paths] = 
     print(f"Wrote: {out_csv}")
 
 def main():
+
+    from src.run_context import get_week_end, enforce_match
     ap = argparse.ArgumentParser()
-    ap.add_argument("--week_end", required=True)
+    ap.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
     ap.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
     ap.add_argument("--schema", default="news-novelty-v1b", help="Schema ID (e.g., news-novelty-v1, news-novelty-v1b)")
     args = ap.parse_args()
 
-    run(week_end=args.week_end, regime_id=args.regime, schema_id=args.schema)
+    canonical = get_week_end(args.week_end)
+    enforce_match(args.week_end, canonical)
+
+    run(week_end=canonical.isoformat(), regime_id=args.regime, schema_id=args.schema)
 
 if __name__ == "__main__":
     main()

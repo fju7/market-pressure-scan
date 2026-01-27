@@ -469,6 +469,7 @@ def build_news_feature_panel(
                 p.add_argument("--regime", default="news-novelty-v1", help="Regime id for locating features_weekly and namespacing outputs")
                 p.add_argument("--offline", action="store_true", help="Require all artifacts present (no fetch)")
                 p.add_argument("--rebuild_features", action="store_true", help="Rebuild features from rep_enriched")
+                p.add_argument("--force", action="store_true", help="Rebuild even if outputs exist")
                 args = p.parse_args()
 
                 canonical = get_week_end(args.week_end)
@@ -480,6 +481,7 @@ def build_news_feature_panel(
                     regime=args.regime,
                     offline=args.offline,
                     rebuild_features=args.rebuild_features,
+                    force=getattr(args, "force", False),
                 )
 
                 print(f"\n5 Rescoring complete")

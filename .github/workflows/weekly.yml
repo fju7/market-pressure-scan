@@ -18,8 +18,9 @@ on:
         required: false
         default: "news-novelty-v1b"
 
+
 concurrency:
-  group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
+  group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}
   cancel-in-progress: ${{ github.event_name == 'schedule' }}
 
 
@@ -37,13 +38,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
 
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+
+
+      # Removed duplicate 'Install dependencies' step
 
       - name: Sanity check deps
         run: |
@@ -156,6 +160,7 @@ jobs:
           print("modules:", mods)
           PY
 
+
       - name: Debug run_context + sys.path
         run: |
           set -euo pipefail
@@ -171,7 +176,7 @@ jobs:
           fi
           echo "=== python import test ==="
           python - <<'PY'
-          import sys, importlib
+          import sys
           print("sys.executable:", sys.executable)
           print("sys.version:", sys.version)
           print("sys.path[0:8]:", sys.path[:8])
@@ -191,13 +196,14 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           WEEK_END="${{ steps.week_end.outputs.week_end }}"
+          export WEEK_END
           python -m src.ingest_market_candles --universe sp500_universe.csv --week_end "$WEEK_END"
           python -m src.ingest_company_news  --universe sp500_universe.csv --week_end "$WEEK_END"
           python -m src.cluster_news --week_end "$WEEK_END"
           python -m src.enrich_reps_openai --week_end "$WEEK_END"
 
-      - name: Save upstream artifacts cache
-        if: always()
+      - name: Save derived cache (only on miss)
+        if: steps.cache-derived-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -223,10 +229,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
 
       - name: Sanity check deps
         run: |
@@ -281,6 +283,11 @@ jobs:
           WEEK_END="${{ needs.build_artifacts.outputs.week_end }}"
           REGIME="${{ github.event.inputs.regime || 'news-novelty-v1' }}"
           SCHEMA="${{ github.event.inputs.schema || 'news-novelty-v1b' }}"
+          python - <<'PY'
+          import inspect, src.features_scores as m
+          print("features_scores module:", m.__file__)
+          # print the exact lines around the failing section if you know the line number
+          PY
           python -m src.features_scores --universe sp500_universe.csv --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
           python -m src.trader_sheet --week_end "$WEEK_END" --regime "$REGIME" --schema "$SCHEMA"
 
@@ -390,7 +397,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const week_end = '${{ steps.week_end.outputs.week_end }}';
+            const week_end = '${{ needs.build_artifacts.outputs.week_end }}';
             const status = '${{ job.status }}';
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             

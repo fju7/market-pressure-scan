@@ -291,23 +291,27 @@ def apply_scoring_schema(features: pd.DataFrame, schema: ScoringSchema) -> pd.Da
     return df
 
 def main():
+    from src.run_context import get_week_end, enforce_match
     p = argparse.ArgumentParser(description="Rescore week with specified schema (offline)")
-    p.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+    p.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
     p.add_argument("--schema", required=True, help="Schema ID (e.g., news-novelty-v1b)")
     p.add_argument("--regime", default="news-novelty-v1", help="Regime id for locating features_weekly and namespacing outputs")
     p.add_argument("--offline", action="store_true", help="Require all artifacts present (no fetch)")
     p.add_argument("--rebuild_features", action="store_true", help="Rebuild features from rep_enriched")
     args = p.parse_args()
 
+    canonical = get_week_end(args.week_end)
+    enforce_match(args.week_end, canonical)
+
     metadata = rescore_week(
-        week_end=args.week_end,
+        week_end=canonical.isoformat(),
         schema_id=args.schema,
         regime=args.regime,
         offline=args.offline,
         rebuild_features=args.rebuild_features,
     )
 
-    print(f"\n✅ Rescoring complete")
+    print(f"\n5 Rescoring complete")
     print(f"   Schema: {metadata['schema_id']} (hash: {metadata['schema_hash']})")
     print(f"   Output: {metadata['output_path']}")
 

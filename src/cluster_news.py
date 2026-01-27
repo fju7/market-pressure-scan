@@ -48,31 +48,31 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
         return 1.0
     if not a or not b:
         return 0.0
-    inter = len(a & b)
-    uni = len(a | b)
-    return inter / uni if uni else 0.0
+    if __name__ == "__main__":
+        ap = argparse.ArgumentParser("Cluster company news into story clusters (token Jaccard)")
+        ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+        ap.add_argument("--in", dest="inp", default=None, help="Input parquet (default: derived/company_news for week_end)")
+        ap.add_argument("--out", dest="outp", default=None, help="Output parquet (default: derived/news_clusters for week_end)")
+        ap.add_argument("--jaccard", type=float, default=0.55, help="Jaccard threshold for greedy clustering")
+        ap.add_argument("--max_clusters_per_symbol", type=int, default=2, help="Keep top N clusters per symbol")
+        ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
+        args = ap.parse_args()
 
-def stable_cluster_id(symbol: str, rep_headline: str, rep_published_utc: str) -> str:
-    base = f"{symbol}|{rep_published_utc}|{rep_headline}".encode("utf-8", errors="ignore")
-    h = hashlib.sha1(base).hexdigest()[:12]
-    return f"{symbol}_{h}"
+        inp = Path(args.inp) if args.inp else Path(
+            f"data/derived/company_news/week_ending={args.week_end}/company_news.parquet"
+        )
+        outp = Path(args.outp) if args.outp else Path(
+            f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet"
+        )
 
-@dataclass
-class ClusterConfig:
-    jaccard_threshold: float = 0.55
-    max_docs_per_symbol: int = 5000  # safety
-
-def run(week_end: str,
-    in_parquet: Path,
-    out_parquet: Path,
-    jaccard_threshold: float = 0.55,
-    max_clusters_per_symbol: int = 2,
-    force: bool = False) -> Path:
-    if not in_parquet.exists():
-        raise FileNotFoundError(f"Missing raw news file: {in_parquet}")
-
-    if should_skip(out_parquet, force):
-        print(f"SKIP: {out_parquet} exists and --force not set.")
+        run(
+            week_end=args.week_end,
+            in_parquet=inp,
+            out_parquet=outp,
+            jaccard_threshold=args.jaccard,
+            max_clusters_per_symbol=args.max_clusters_per_symbol,
+            force=args.force,
+        )
         return out_parquet
 
     raw = pd.read_parquet(in_parquet)
@@ -167,9 +167,11 @@ def run(week_end: str,
     return out_parquet
 
 
+from src.run_context import get_week_end, enforce_match
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser("Cluster company news into story clusters (token Jaccard)")
-    ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+    ap.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
     ap.add_argument("--in", dest="inp", default=None, help="Input parquet (default: derived/company_news for week_end)")
     ap.add_argument("--out", dest="outp", default=None, help="Output parquet (default: derived/news_clusters for week_end)")
     ap.add_argument("--jaccard", type=float, default=0.55, help="Jaccard threshold for greedy clustering")
@@ -177,11 +179,14 @@ if __name__ == "__main__":
     ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
 
-    inp = Path(args.inp) if args.inp else Path(f"data/derived/company_news/week_ending={args.week_end}/company_news.parquet")
-    outp = Path(args.outp) if args.outp else Path(f"data/derived/news_clusters/week_ending={args.week_end}/clusters.parquet")
+    canonical = get_week_end(args.week_end)
+    enforce_match(args.week_end, canonical)
+
+    inp = Path(args.inp) if args.inp else Path(f"data/derived/company_news/week_ending={canonical.isoformat()}/company_news.parquet")
+    outp = Path(args.outp) if args.outp else Path(f"data/derived/news_clusters/week_ending={canonical.isoformat()}/clusters.parquet")
 
     run(
-        week_end=args.week_end,
+        week_end=canonical.isoformat(),
         in_parquet=inp,
         out_parquet=outp,
         jaccard_threshold=args.jaccard,
