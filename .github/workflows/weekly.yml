@@ -141,6 +141,50 @@ jobs:
           test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
           echo "✓ Required secrets present"
 
+      - name: Debug run_context visibility
+        run: |
+          set -euo pipefail
+          echo "=== src directory ==="
+          ls -la src | sed -n '1,200p'
+
+          echo
+          echo "=== Python module discovery ==="
+          python - <<'PY'
+          import pkgutil, src
+          mods = [m.name for m in pkgutil.iter_modules(src.__path__)]
+          print("run_context present:", "run_context" in mods)
+          print("modules:", mods)
+          PY
+
+      - name: Debug run_context + sys.path
+        run: |
+          set -euo pipefail
+          echo "PWD=$(pwd)"
+          echo "PYTHONPATH=${PYTHONPATH:-<unset>}"
+          echo "=== src listing ==="
+          ls -la src
+          echo "=== does src/run_context.py exist? ==="
+          if [ -f src/run_context.py ]; then
+            echo "YES: src/run_context.py"
+          else
+            echo "NO: src/run_context.py (this would cause ModuleNotFoundError)"
+          fi
+          echo "=== python import test ==="
+          python - <<'PY'
+          import sys, importlib
+          print("sys.executable:", sys.executable)
+          print("sys.version:", sys.version)
+          print("sys.path[0:8]:", sys.path[:8])
+          import src
+          print("src.__file__:", src.__file__)
+          try:
+              import src.run_context as rc
+              print("src.run_context.__file__:", rc.__file__)
+          except Exception as e:
+              print("IMPORT src.run_context FAILED:", repr(e))
+              raise
+          PY
+
       - name: Run candles/news/cluster/enrich
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
