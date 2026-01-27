@@ -2,9 +2,7 @@ name: Weekly Market Pressure Scan
 
 on:
   schedule:
-    # 23:35 UTC Fridays.
-    # This is 6:35pm ET during Standard Time and 7:35pm ET during Daylight Time.
-    # We add a NY-local-time guard below so it runs at 6:35pm ET year-round.
+    # Run at 6:35pm New York time year-round (23:35 UTC Friday; guard handles DST)
     - cron: "35 23 * * 5"
   workflow_dispatch:
     inputs:
@@ -14,51 +12,7 @@ on:
         default: ""
 
 concurrency:
-  group: market-pressure-scan-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'schedule' }}
-
-jobs:
-  run-pipeline:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Guard - only proceed at 6:35pm ET Friday (scheduled only)
-        env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: |
-          python - <<'PY'
-          import datetime as dt
-          from zoneinfo import ZoneInfo
-          import os
-name: Weekly Market Pressure Scan
-
-on:
-  schedule:
-    # Run at 6:35pm New York time year-round:
-    # - During EDT: 6:35pm ET = 22:35 UTC
-    # - During EST: 6:35pm ET = 23:35 UTC
-    - cron: "35 22 * * 5"
-    - cron: "35 23 * * 5"
-  workflow_dispatch:
-    inputs:
-      week_end:
-        description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
-        required: false
-        default: ""
-
-concurrency:
-  group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
+  group: market-pressure-scan-${{ github.ref }}-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
   cancel-in-progress: ${{ github.event_name == 'schedule' }}
 
 jobs:
