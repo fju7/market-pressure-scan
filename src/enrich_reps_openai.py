@@ -1,11 +1,9 @@
 
+
 from __future__ import annotations
-from src.io_atomic import write_parquet_atomic
 
 import argparse
 import hashlib
-from .reuse import should_skip
-from src.io_atomic import write_parquet_atomic
 import json
 import os
 import time
@@ -16,6 +14,10 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import requests
 from tqdm import tqdm
+
+from .io_atomic import write_parquet_atomic
+from .reuse import should_skip
+from .run_context import enforce_match, get_week_end
 
 OPENAI_BASE = "https://api.openai.com/v1"
 
@@ -205,7 +207,10 @@ def run(
     if len(df) == 0:
         print(f"[INFO] No clusters to process. Creating empty output.")
         out_parquet.parent.mkdir(parents=True, exist_ok=True)
-        empty_df = pd.DataFrame(columns=["symbol", "cluster_id", "embedding", "sentiment_json", "event_json"])
+        empty_df = pd.DataFrame(columns=[
+            "week_ending_date", "symbol", "cluster_id", "embedding", "sentiment_json", "event_json",
+            "embedding_model", "classifier_model"
+        ])
         write_parquet_atomic(empty_df, out_parquet)
         # Write meta.json for empty case
         meta_path = out_parquet.parent / "meta.json"
@@ -238,7 +243,7 @@ def run(
             # If nothing to process, we're done
             if len(df) == 0:
                 print(f"[INFO] All clusters already enriched. Nothing to do.")
-                return
+                return out_parquet
 
     for col in ["symbol","cluster_id","rep_published_utc","rep_headline","rep_summary"]:
         if col not in df.columns:
@@ -328,12 +333,18 @@ def run(
     return out_parquet
 
 
-import os
-from src.run_context import get_week_end, enforce_match
+
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser("Enrich representative clusters with embeddings + OpenAI sentiment/event classification")
-    ap.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
+    ap = argparse.ArgumentParser(
+        "Enrich representative clusters with embeddings + OpenAI sentiment/event classification"
+    )
+    ap.add_argument(
+        "--week_end",
+        required=False,
+        default=None,
+        help="Week ending date YYYY-MM-DD (optional; normally from env)",
+    )
     ap.add_argument("--clusters", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--emb_model", default="text-embedding-3-small")
@@ -345,15 +356,15 @@ if __name__ == "__main__":
     ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
 
-    week_end = os.getenv("WEEK_END") or args.week_end
-    canonical = get_week_end(week_end)
-    enforce_match(week_end, canonical)
+    canonical = get_week_end(args.week_end)
+    enforce_match(args.week_end, canonical)
+    week_end_str = canonical.isoformat()
 
-    clusters = args.clusters or f"data/derived/news_clusters/week_ending={canonical.isoformat()}/clusters.parquet"
-    outp = args.out or f"data/derived/rep_enriched/week_ending={canonical.isoformat()}/rep_enriched.parquet"
+    clusters = args.clusters or f"data/derived/news_clusters/week_ending={week_end_str}/clusters.parquet"
+    outp = args.out or f"data/derived/rep_enriched/week_ending={week_end_str}/rep_enriched.parquet"
 
     run(
-        week_end=canonical.isoformat(),
+        week_end=week_end_str,
         clusters_parquet=Path(clusters),
         out_parquet=Path(outp),
         emb_model=args.emb_model,
