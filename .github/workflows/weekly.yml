@@ -1,9 +1,22 @@
 on:
 
-[PASTE FULL NEW WORKFLOW CONTENT HERE]
-
-      - name: Cache status (derived)
-        run: echo "derived cache-hit=${{ steps.cache-derived-restore.outputs.cache-hit }}"
+on:
+  schedule:
+    - cron: "30 13 * * 5" # Fridays 8:30am ET
+  workflow_dispatch:
+    inputs:
+      week_end:
+        description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
+        required: false
+        default: ""
+      regime:
+        description: "Regime ID (e.g., news-novelty-v1, news-novelty-v1b)"
+        required: false
+        default: "news-novelty-v1"
+      schema:
+        description: "Scoring schema ID (e.g., news-novelty-v1, news-novelty-v1b)"
+        required: false
+        default: "news-novelty-v1b"
 
 concurrency:
   group: market-pressure-scan-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}-${{ github.event.inputs.regime || 'news-novelty-v1' }}-${{ github.event.inputs.schema || 'news-novelty-v1b' }}
