@@ -459,27 +459,32 @@ def build_news_feature_panel(
         if "symbol" in g.columns:
             # If it's already there, validate it is consistent
             bad = g["symbol"].notna() & (g["symbol"] != sym)
-            if bad.any():
-                raise ValueError(f"add_roll: symbol column inconsistent with group key {sym}")
-        g["symbol"] = sym
-        
-        # Perform rolling computations
-        g = g.sort_values("week_dt")
-        g["count_5d_dedup"] = g["total_clusters"]
-        g["count_20d_dedup"] = g["total_clusters"].rolling(window=4, min_periods=1).sum()
-        g["count_60d_dedup"] = g["total_clusters"].rolling(window=12, min_periods=1).sum()
-        
-        # Final invariant: never return without symbol
-        if "symbol" not in g.columns:
-            raise ValueError("add_roll: BUG - symbol dropped inside add_roll")
-        
-        return g
 
-    try:
-        weekly_counts_tmp = (
-            weekly_counts
-            .groupby("symbol", group_keys=False, sort=False)
+            from src.run_context import get_week_end, enforce_match
+
             .apply(add_roll)
+                p = argparse.ArgumentParser(description="Rescore week with specified schema (offline)")
+                p.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional; normally from env)")
+                p.add_argument("--schema", required=True, help="Schema ID (e.g., news-novelty-v1b)")
+                p.add_argument("--regime", default="news-novelty-v1", help="Regime id for locating features_weekly and namespacing outputs")
+                p.add_argument("--offline", action="store_true", help="Require all artifacts present (no fetch)")
+                p.add_argument("--rebuild_features", action="store_true", help="Rebuild features from rep_enriched")
+                args = p.parse_args()
+
+                canonical = get_week_end(args.week_end)
+                enforce_match(args.week_end, canonical)
+
+                metadata = rescore_week(
+                    week_end=canonical.isoformat(),
+                    schema_id=args.schema,
+                    regime=args.regime,
+                    offline=args.offline,
+                    rebuild_features=args.rebuild_features,
+                )
+
+                print(f"\n5 Rescoring complete")
+                print(f"   Schema: {metadata['schema_id']} (hash: {metadata['schema_hash']})")
+                print(f"   Output: {metadata['output_path']}")
         )
         dump_df(weekly_counts_tmp.head(200), debug_dir, "weekly_counts_post_apply_head")
         
@@ -1098,6 +1103,7 @@ if __name__ == "__main__":
     p.add_argument("--lookback_weeks", default=12, type=int, help="History window in weeks for NV/NA and baselines")
     p.add_argument("--regime", default="news-novelty-v1", help="Regime ID (e.g., news-novelty-v1, news-novelty-v1b)")
     p.add_argument("--schema", default="news-novelty-v1b", help="Scoring schema ID")
+    p.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = p.parse_args()
 
     print(f"\n🔒 FEATURES_SCORES RUN")
