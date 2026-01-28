@@ -63,6 +63,11 @@ jobs:
           head -5 sp500_universe.csv
           echo "..."
           tail -3 sp500_universe.csv
+      - name: Ingest market candles (required for scoring)
+        run: |
+          set -euo pipefail
+          python -m src.ingest_market_candles --universe sp500_universe.csv --week_end "${WEEK_END}"
+          test -f data/derived/market_daily/candles_daily.parquet || (echo "❌ candles_daily.parquet missing after ingest" && exit 1)
 
       - name: Determine week_end
         id: week_end
@@ -183,6 +188,13 @@ jobs:
       # Pipeline execution
       # Adjust module names if yours differ.
       # ----------------------------
+      - name: Cache market candles
+        uses: actions/cache@v4
+        with:
+          path: data/derived/market_daily
+          key: market-daily-${{ runner.os }}-${{ env.WEEK_END }}
+          restore-keys: |
+            market-daily-${{ runner.os }}-
 
       - name: Run pipeline (ingest → cluster → enrich → score → report)
         env:
