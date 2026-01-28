@@ -118,7 +118,7 @@ def fetch_company_news(
 def main(
     week_end: str | None,
     universe_path: str,
-    lookback_days: int = 90,
+    lookback_days: int = 7,
     force: bool = False,
 ) -> Path:
     api_key = (os.environ.get("FINNHUB_API_KEY") or "").strip()
@@ -126,8 +126,8 @@ def main(
         raise ValueError("FINNHUB_API_KEY environment variable not set")
 
     week_end_date = _parse_week_end(week_end)
-    from_date = week_end_date - timedelta(days=lookback_days)
     to_date = week_end_date
+    from_date = week_end_date - timedelta(days=lookback_days - 1)
 
     output_dir = Path("data/derived/company_news") / f"week_ending={week_end_date.isoformat()}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -165,12 +165,22 @@ def main(
 
     combined = pd.concat(all_rows, ignore_index=True)
 
+
     # Normalize + types
     combined["symbol"] = combined["symbol"].astype(str).str.upper().str.strip()
     combined["published_utc"] = pd.to_datetime(combined["published_utc"], utc=True, errors="coerce")
     combined["headline"] = combined["headline"].astype(str).fillna("").str.strip()
     combined["summary"] = combined["summary"].astype(str).fillna("").str.strip()
     combined["url"] = combined["url"].astype(str).fillna("").str.strip()
+
+    # Hard-enforce window in UTC (Finnhub sometimes returns out-of-range items)
+    start_utc = pd.Timestamp(from_date, tz="UTC")
+    end_utc = pd.Timestamp(to_date + timedelta(days=1), tz="UTC")  # exclusive end (next day 00:00)
+    before = len(combined)
+    combined = combined[(combined["published_utc"] >= start_utc) & (combined["published_utc"] < end_utc)].copy()
+    dropped = before - len(combined)
+    if dropped:
+        print(f"   Dropped {dropped:,} out-of-window rows (kept {len(combined):,})")
 
     # Dedupe: (symbol, url, headline)
     combined = combined.drop_duplicates(subset=["symbol","url","headline"], keep="last")
@@ -189,7 +199,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser("Ingest company news from Finnhub")
     ap.add_argument("--week_end", required=False, default=None, help="Week ending date YYYY-MM-DD (optional if WEEK_END set)")
     ap.add_argument("--universe", default="sp500_universe.csv", help="Universe CSV with 'symbol' column")
-    ap.add_argument("--lookback_days", type=int, default=90)
+    ap.add_argument("--lookback_days", type=int, default=7)
     ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
     args = ap.parse_args()
 
