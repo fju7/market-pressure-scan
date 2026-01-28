@@ -195,13 +195,18 @@ jobs:
           set -euo pipefail
           echo "Running pipeline for WEEK_END=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID}"
 
-          # NOTE: Replace these with the exact module entrypoints used in your repo.
-          # The idea is: generate clusters/enriched first, then features+scores, then report.
-
+          echo "=== CLI HELP (sanity) ==="
+          python -m src.cluster_news -h | head -50
+          python -m src.enrich_reps_openai -h | head -50
+          python -m src.features_scores -h | head -80
+          python -m src.report_weekly -h | head -80
+          echo "========================="
 
           python -m src.ingest_company_news --week_end "${WEEK_END}" --universe sp500_universe.csv
           python -m src.cluster_news --week_end "${WEEK_END}"
-          python -m src.enrich_reps_openai --week_end "${WEEK_END}" --regime "${REGIME_ID}"
+
+          # If enrich_reps_openai does NOT accept --regime, remove it like cluster_news
+          python -m src.enrich_reps_openai --week_end "${WEEK_END}"
 
           python -m src.features_scores \
             --universe sp500_universe.csv \
