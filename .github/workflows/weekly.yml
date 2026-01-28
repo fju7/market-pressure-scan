@@ -18,6 +18,10 @@ concurrency:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    env:
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
     outputs:
       week_end: ${{ steps.week_end.outputs.week_end }}
     permissions:
