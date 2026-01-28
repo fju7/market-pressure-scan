@@ -198,8 +198,9 @@ jobs:
           # NOTE: Replace these with the exact module entrypoints used in your repo.
           # The idea is: generate clusters/enriched first, then features+scores, then report.
 
+
           python -m src.ingest_company_news --week_end "${WEEK_END}" --universe sp500_universe.csv
-          python -m src.cluster_news --week_end "${WEEK_END}" --regime "${REGIME_ID}"
+          python -m src.cluster_news --week_end "${WEEK_END}"
           python -m src.enrich_reps_openai --week_end "${WEEK_END}" --regime "${REGIME_ID}"
 
           python -m src.features_scores \
