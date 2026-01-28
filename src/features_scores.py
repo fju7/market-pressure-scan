@@ -47,112 +47,196 @@ def _debug_env_stamp():
     print("===================================")
 
 def dump_df(df: pd.DataFrame, out_dir: Path, name: str):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    p = out_dir / f"{name}.csv"
-    df.to_csv(p, index=True)
-    print(f"📦 dumped df -> {p} (shape={df.shape}, index_names={df.index.names})")
 
-# ----------------------------
-# Config / paths
-# ----------------------------
+    from __future__ import annotations
+    # src/features_scores.py
 
-NY = tz.gettz("America/New_York")
+    import argparse
+    import hashlib
+    import json
+    import math
+    import os
+    import platform
+    import subprocess
+    from dataclasses import dataclass
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+    from typing import Any, Dict, List, Optional, Tuple
 
-@dataclass(frozen=True)
+    import numpy as np
+    import pandas as pd
+    from dateutil import tz
 
-class Paths:
-    root: Path
-    derived: Path
-    # Canonical artifact locations (single source of truth)
-    market_daily_path: Path
-    company_news_dir: Path
-    news_clusters_dir: Path
-    rep_enriched_dir: Path
-    out_features_dir: Path
-    out_scores_dir: Path
-    regime_id: str = "news-novelty-v1"  # For provenance tracking
+    from src.io_atomic import write_parquet_atomic
+    from src.reuse import should_skip
+    from src.scoring_schema import load_schema, write_schema_provenance
+
+    NY = tz.gettz("America/New_York")
 
 
-def default_paths(regime_id: str = "news-novelty-v1", schema_id: str | None = None) -> Paths:
-    root = Path(__file__).resolve().parents[1]
-    derived = root / "data" / "derived"
-    # Canonical artifact locations
-    market_daily_path = derived / "market_daily" / "candles_daily.parquet"
-    company_news_dir = derived / "company_news"
-    news_clusters_dir = derived / "news_clusters"
-    rep_enriched_dir = derived / "rep_enriched"
-    features_base = derived / "features_weekly" / f"regime={regime_id}"
-    scores_base = derived / "scores_weekly" / f"regime={regime_id}"
-    if schema_id:
-        scores_base = scores_base / f"schema={schema_id}"
-    return Paths(
-        root=root,
-        derived=derived,
-        market_daily_path=market_daily_path,
-        company_news_dir=company_news_dir,
-        news_clusters_dir=news_clusters_dir,
-        rep_enriched_dir=rep_enriched_dir,
-        out_features_dir=features_base,
-        out_scores_dir=scores_base,
-        regime_id=regime_id,
-    )
+    # =============================================================================
+    # Debug helpers
+    # =============================================================================
 
-# ----------------------------
-# Utilities
-# ----------------------------
+    def _debug_env_stamp() -> None:
+        print("=== FEATURES_SCORES DEBUG STAMP ===")
+        print("module_file:", __file__)
+        print("python:", platform.python_version())
+        print("pandas:", pd.__version__, "numpy:", np.__version__)
+        try:
+            src = Path(__file__).read_bytes()
+            print("features_scores.py sha256:", hashlib.sha256(src).hexdigest()[:16])
+        except Exception as e:
+            print("sha256 read failed:", e)
+        print("===================================")
 
-def parse_week_end(s: str) -> datetime:
-    # expects YYYY-MM-DD (ET date representing the Friday)
-    dt = datetime.fromisoformat(s)
-    return datetime(dt.year, dt.month, dt.day, 0, 0, 0)
 
-def week_end_cutoff_utc(week_end_et: datetime) -> datetime:
-    # Friday 4pm ET cutoff
-    dt_et = datetime(week_end_et.year, week_end_et.month, week_end_et.day, 16, 0, 0, tzinfo=NY)
-    return dt_et.astimezone(timezone.utc)
+    # =============================================================================
+    # Paths / config
+    # =============================================================================
 
-def winsorize(x: np.ndarray, zcap: float = 3.0) -> np.ndarray:
-    return np.clip(x, -zcap, zcap)
+    @dataclass(frozen=True)
+    class Paths:
+        root: Path
+        derived: Path
 
-def zscore_series(s: pd.Series, zcap: float = 3.0) -> pd.Series:
-    vals = s.astype(float).to_numpy()
-    mu = np.nanmean(vals)
-    sd = np.nanstd(vals)
-    if not np.isfinite(sd) or sd == 0:
-        return pd.Series(np.zeros(len(s), dtype=float), index=s.index)
-    z = (vals - mu) / sd
-    z = winsorize(z, zcap=zcap)
-    return pd.Series(z, index=s.index)
+        market_daily_path: Path
+        universe_csv: Optional[Path]
 
-def cosine_sim_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    # a: (m,d), b: (n,d)
-    # returns (m,n)
-    a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-12)
-    b_norm = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-12)
-    return a_norm @ b_norm.T
+        company_news_dir: Path
+        news_clusters_dir: Path
+        rep_enriched_dir: Path
 
-def safe_json_load(x) -> dict:
-    if isinstance(x, dict):
-        return x
-    if isinstance(x, str):
-        x = x.strip()
-        if not x:
-            return {}
-        return json.loads(x)
-    return {}
+        out_features_dir: Path
+        out_scores_dir: Path
 
-# ----------------------------
-# Loaders
-# ----------------------------
+        regime_id: str
+
+
+    def default_paths(regime_id: str = "news-novelty-v1", schema_id: Optional[str] = None) -> Paths:
+        root = Path(__file__).resolve().parents[1]
+        derived = root / "data" / "derived"
+
+        market_daily_path = derived / "market_daily" / "candles_daily.parquet"
+        company_news_dir = derived / "company_news"
+        news_clusters_dir = derived / "news_clusters"
+        rep_enriched_dir = derived / "rep_enriched"
+
+        out_features_dir = derived / "features_weekly" / f"regime={regime_id}"
+        out_scores_dir = derived / "scores_weekly" / f"regime={regime_id}"
+        if schema_id:
+            out_scores_dir = out_scores_dir / f"schema={schema_id}"
+
+        return Paths(
+            root=root,
+            derived=derived,
+            market_daily_path=market_daily_path,
+            universe_csv=None,
+            company_news_dir=company_news_dir,
+            news_clusters_dir=news_clusters_dir,
+            rep_enriched_dir=rep_enriched_dir,
+            out_features_dir=out_features_dir,
+            out_scores_dir=out_scores_dir,
+            regime_id=regime_id,
+        )
+
+
+    # =============================================================================
+    # Utilities
+    # =============================================================================
+
+    def parse_week_end(s: str) -> datetime:
+        # YYYY-MM-DD (ET date representing Friday)
+        d = datetime.fromisoformat(s)
+        return datetime(d.year, d.month, d.day, 0, 0, 0)
+
+
+
+        out: List[str] = []
+        for k in range(n_weeks):
+            dd = week_end_et - timedelta(days=7 * k)
+            out.append(dd.date().isoformat())
+        return out
+
 
 def load_universe(universe_csv: Path) -> pd.DataFrame:
+        return np.clip(x, -zcap, zcap)
+
+
     df = pd.read_csv(universe_csv)
+        vals = s.astype(float).to_numpy()
+        mu = np.nanmean(vals)
+        sd = np.nanstd(vals)
+        if not np.isfinite(sd) or sd == 0:
+            return pd.Series(np.zeros(len(s), dtype=float), index=s.index)
+        z = (vals - mu) / sd
+        z = winsorize(z, zcap=zcap)
+        return pd.Series(z, index=s.index)
+
+
     df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+        if isinstance(x, dict):
+            return x
+        if isinstance(x, str):
+            s = x.strip()
+            if not s:
+                return {}
+            try:
+                return json.loads(s)
+            except Exception:
+                return {}
+        return {}
+
+
     if "sector" not in df.columns:
+        a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-12)
+        b_norm = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-12)
+        return a_norm @ b_norm.T
+
+
         df["sector"] = "Unknown"
+        if x is None:
+            return None
+        if isinstance(x, float) and np.isnan(x):
+            return None
+        if isinstance(x, np.ndarray):
+            return x.astype(np.float32)
+        if isinstance(x, (list, tuple)):
+            try:
+                return np.array(x, dtype=np.float32)
+            except Exception:
+                return None
+        return None
+
+
+    # =============================================================================
+    # Loaders
+    # =============================================================================
+
     return df[["symbol", "sector"]].drop_duplicates()
+        df = pd.read_csv(universe_csv)
+        if "symbol" not in df.columns:
+            raise ValueError(f"Universe CSV missing 'symbol' column: {universe_csv}")
+        df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+        if "sector" not in df.columns:
+            df["sector"] = "Unknown"
+        return df[["symbol", "sector"]].drop_duplicates()
+
+
+
+        p = base_dir / f"week_ending={week_end}" / filename
+        if not p.exists():
+            raise FileNotFoundError(f"Missing required file: {p}")
+        return pd.read_parquet(p)
+
 
 def load_week_parquet(base_dir: Path, week_end: str, filename: str) -> pd.DataFrame:
+        p = base_dir / f"week_ending={week_end}" / filename
+        if not p.exists():
+            return None
+        return pd.read_parquet(p)
+
+
     p = base_dir / f"week_ending={week_end}" / filename
     if not p.exists():
         raise FileNotFoundError(f"Missing required file: {p}")
