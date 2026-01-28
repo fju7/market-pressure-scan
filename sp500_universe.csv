@@ -1,504 +1,503 @@
 symbol,sector
-A,Health Care
-AAPL,Information Technology
-ABBV,Health Care
-ABNB,Consumer Discretionary
-ABT,Health Care
-ACGL,Financials
-ACN,Information Technology
-ADBE,Information Technology
-ADI,Information Technology
-ADM,Consumer Staples
-ADP,Industrials
-ADSK,Information Technology
-AEE,Utilities
-AEP,Utilities
-AES,Utilities
-AFL,Financials
-AIG,Financials
-AIZ,Financials
-AJG,Financials
-AKAM,Information Technology
-ALB,Materials
-ALGN,Health Care
-ALL,Financials
-ALLE,Industrials
-AMAT,Information Technology
-AMCR,Materials
-AMD,Information Technology
-AME,Industrials
-AMGN,Health Care
-AMP,Financials
-AMT,Real Estate
-AMZN,Consumer Discretionary
-ANET,Information Technology
-AON,Financials
-AOS,Industrials
-APA,Energy
-APD,Materials
-APH,Information Technology
-APO,Financials
-APP,Information Technology
-APTV,Consumer Discretionary
-ARE,Real Estate
-ARES,Financials
-ATO,Utilities
-AVB,Real Estate
-AVGO,Information Technology
-AVY,Materials
-AWK,Utilities
-AXON,Industrials
-AXP,Financials
-AZO,Consumer Discretionary
-BA,Industrials
-BAC,Financials
-BALL,Materials
-BAX,Health Care
-BBY,Consumer Discretionary
-BDX,Health Care
-BEN,Financials
-BF.B,Consumer Staples
-BG,Consumer Staples
-BIIB,Health Care
-BK,Financials
-BKNG,Consumer Discretionary
-BKR,Energy
-BLDR,Industrials
-BLK,Financials
-BMY,Health Care
-BR,Industrials
-BRK.B,Financials
-BRO,Financials
-BSX,Health Care
-BX,Financials
-BXP,Real Estate
-C,Financials
-CAG,Consumer Staples
-CAH,Health Care
-CARR,Industrials
-CAT,Industrials
-CB,Financials
-CBOE,Financials
-CBRE,Real Estate
-CCI,Real Estate
-CCL,Consumer Discretionary
-CDNS,Information Technology
-CDW,Information Technology
-CEG,Utilities
-CF,Materials
-CFG,Financials
-CHD,Consumer Staples
-CHRW,Industrials
-CHTR,Communication Services
-CI,Health Care
-CINF,Financials
-CL,Consumer Staples
-CLX,Consumer Staples
-CMCSA,Communication Services
-CME,Financials
-CMG,Consumer Discretionary
-CMI,Industrials
-CMS,Utilities
-CNC,Health Care
-CNP,Utilities
-COF,Financials
-COIN,Financials
-COO,Health Care
-COP,Energy
-COR,Health Care
-COST,Consumer Staples
-CPAY,Financials
-CPB,Consumer Staples
-CPRT,Industrials
-CPT,Real Estate
-CRH,Materials
-CRL,Health Care
-CRM,Information Technology
-CRWD,Information Technology
-CSCO,Information Technology
-CSGP,Real Estate
-CSX,Industrials
-CTAS,Industrials
-CTRA,Energy
-CTSH,Information Technology
-CTVA,Materials
-CVNA,Consumer Discretionary
-CVS,Health Care
-CVX,Energy
-D,Utilities
-DAL,Industrials
-DASH,Consumer Discretionary
-DAY,Industrials
-DD,Materials
-DDOG,Information Technology
-DE,Industrials
-DECK,Consumer Discretionary
-DELL,Information Technology
-DG,Consumer Staples
-DGX,Health Care
-DHI,Consumer Discretionary
-DHR,Health Care
-DIS,Communication Services
-DLR,Real Estate
-DLTR,Consumer Staples
-DOC,Real Estate
-DOV,Industrials
-DOW,Materials
-DPZ,Consumer Discretionary
-DRI,Consumer Discretionary
-DTE,Utilities
-DUK,Utilities
-DVA,Health Care
-DVN,Energy
-DXCM,Health Care
-EA,Communication Services
-EBAY,Consumer Discretionary
-ECL,Materials
-ED,Utilities
-EFX,Industrials
-EG,Financials
-EIX,Utilities
-EL,Consumer Staples
-ELV,Health Care
-EME,Industrials
-EMR,Industrials
-EOG,Energy
-EPAM,Information Technology
-EQIX,Real Estate
-EQR,Real Estate
-EQT,Energy
-ERIE,Financials
-ES,Utilities
-ESS,Real Estate
-ETN,Industrials
-ETR,Utilities
-EVRG,Utilities
-EW,Health Care
-EXC,Utilities
-EXE,Energy
-EXPD,Industrials
-EXPE,Consumer Discretionary
-EXR,Real Estate
-F,Consumer Discretionary
-FANG,Energy
-FAST,Industrials
-FCX,Materials
-FDS,Financials
-FDX,Industrials
-FE,Utilities
-FFIV,Information Technology
-FICO,Information Technology
-FIS,Financials
-FISV,Financials
-FITB,Financials
-FIX,Industrials
-FOX,Communication Services
-FOXA,Communication Services
-FRT,Real Estate
-FSLR,Information Technology
-FTNT,Information Technology
-FTV,Industrials
-GD,Industrials
-GDDY,Information Technology
-GE,Industrials
-GEHC,Health Care
-GEN,Information Technology
-GEV,Industrials
-GILD,Health Care
-GIS,Consumer Staples
-GL,Financials
-GLW,Information Technology
-GM,Consumer Discretionary
-GNRC,Industrials
-GOOG,Communication Services
-GOOGL,Communication Services
-GPC,Consumer Discretionary
-GPN,Financials
-GRMN,Consumer Discretionary
-GS,Financials
-GWW,Industrials
-HAL,Energy
-HAS,Consumer Discretionary
-HBAN,Financials
-HCA,Health Care
-HD,Consumer Discretionary
-HIG,Financials
-HII,Industrials
-HLT,Consumer Discretionary
-HOLX,Health Care
-HON,Industrials
-HOOD,Financials
-HPE,Information Technology
-HPQ,Information Technology
-HRL,Consumer Staples
-HSIC,Health Care
-HST,Real Estate
-HSY,Consumer Staples
-HUBB,Industrials
-HUM,Health Care
-HWM,Industrials
-IBKR,Financials
-IBM,Information Technology
-ICE,Financials
-IDXX,Health Care
-IEX,Industrials
-IFF,Materials
-INCY,Health Care
-INTC,Information Technology
-INTU,Information Technology
-INVH,Real Estate
-IP,Materials
-IQV,Health Care
-IR,Industrials
-IRM,Real Estate
-ISRG,Health Care
-IT,Information Technology
-ITW,Industrials
-IVZ,Financials
-J,Industrials
-JBHT,Industrials
-JBL,Information Technology
-JCI,Industrials
-JKHY,Financials
-JNJ,Health Care
-JPM,Financials
-KDP,Consumer Staples
-KEY,Financials
-KEYS,Information Technology
-KHC,Consumer Staples
-KIM,Real Estate
-KKR,Financials
-KLAC,Information Technology
-KMB,Consumer Staples
-KMI,Energy
-KO,Consumer Staples
-KR,Consumer Staples
-KVUE,Consumer Staples
-L,Financials
-LDOS,Industrials
-LEN,Consumer Discretionary
-LH,Health Care
-LHX,Industrials
-LII,Industrials
-LIN,Materials
-LLY,Health Care
-LMT,Industrials
-LNT,Utilities
-LOW,Consumer Discretionary
-LRCX,Information Technology
-LULU,Consumer Discretionary
-LUV,Industrials
-LVS,Consumer Discretionary
-LW,Consumer Staples
-LYB,Materials
-LYV,Communication Services
-MA,Financials
-MAA,Real Estate
-MAR,Consumer Discretionary
-MAS,Industrials
-MCD,Consumer Discretionary
-MCHP,Information Technology
-MCK,Health Care
-MCO,Financials
-MDLZ,Consumer Staples
-MDT,Health Care
-MET,Financials
-META,Communication Services
-MGM,Consumer Discretionary
-MKC,Consumer Staples
-MLM,Materials
-MMM,Industrials
-MNST,Consumer Staples
-MO,Consumer Staples
-MOH,Health Care
-MOS,Materials
-MPC,Energy
-MPWR,Information Technology
-MRK,Health Care
-MRNA,Health Care
-MRSH,Financials
-MS,Financials
-MSCI,Financials
-MSFT,Information Technology
-MSI,Information Technology
-MTB,Financials
-MTCH,Communication Services
-MTD,Health Care
-MU,Information Technology
-NCLH,Consumer Discretionary
-NDAQ,Financials
-NDSN,Industrials
-NEE,Utilities
-NEM,Materials
-NFLX,Communication Services
-NI,Utilities
-NKE,Consumer Discretionary
-NOC,Industrials
-NOW,Information Technology
-NRG,Utilities
-NSC,Industrials
-NTAP,Information Technology
-NTRS,Financials
-NUE,Materials
-NVDA,Information Technology
-NVR,Consumer Discretionary
-NWS,Communication Services
-NWSA,Communication Services
-NXPI,Information Technology
-O,Real Estate
-ODFL,Industrials
-OKE,Energy
-OMC,Communication Services
-ON,Information Technology
-ORCL,Information Technology
-ORLY,Consumer Discretionary
-OTIS,Industrials
-OXY,Energy
-PANW,Information Technology
-PAYC,Industrials
-PAYX,Industrials
-PCAR,Industrials
-PCG,Utilities
-PEG,Utilities
-PEP,Consumer Staples
-PFE,Health Care
-PFG,Financials
-PG,Consumer Staples
-PGR,Financials
-PH,Industrials
-PHM,Consumer Discretionary
-PKG,Materials
-PLD,Real Estate
-PLTR,Information Technology
-PM,Consumer Staples
-PNC,Financials
-PNR,Industrials
-PNW,Utilities
-PODD,Health Care
-POOL,Consumer Discretionary
-PPG,Materials
-PPL,Utilities
-PRU,Financials
-PSA,Real Estate
-PSKY,Communication Services
-PSX,Energy
-PTC,Information Technology
-PWR,Industrials
-PYPL,Financials
-Q,Information Technology
-QCOM,Information Technology
-RCL,Consumer Discretionary
-REG,Real Estate
-REGN,Health Care
-RF,Financials
-RJF,Financials
-RL,Consumer Discretionary
-RMD,Health Care
-ROK,Industrials
-ROL,Industrials
-ROP,Information Technology
-ROST,Consumer Discretionary
-RSG,Industrials
-RTX,Industrials
-RVTY,Health Care
-SBAC,Real Estate
-SBUX,Consumer Discretionary
-SCHW,Financials
-SHW,Materials
-SJM,Consumer Staples
-SLB,Energy
-SMCI,Information Technology
-SNA,Industrials
-SNDK,Information Technology
-SNPS,Information Technology
-SO,Utilities
-SOLV,Health Care
-SPG,Real Estate
-SPGI,Financials
-SRE,Utilities
-STE,Health Care
-STLD,Materials
-STT,Financials
-STX,Information Technology
-STZ,Consumer Staples
-SW,Materials
-SWK,Industrials
-SWKS,Information Technology
-SYF,Financials
-SYK,Health Care
-SYY,Consumer Staples
-T,Communication Services
-TAP,Consumer Staples
-TDG,Industrials
-TDY,Information Technology
-TECH,Health Care
-TEL,Information Technology
-TER,Information Technology
-TFC,Financials
-TGT,Consumer Staples
-TJX,Consumer Discretionary
-TKO,Communication Services
-TMO,Health Care
-TMUS,Communication Services
-TPL,Energy
-TPR,Consumer Discretionary
-TRGP,Energy
-TRMB,Information Technology
-TROW,Financials
-TRV,Financials
-TSCO,Consumer Discretionary
-TSLA,Consumer Discretionary
-TSN,Consumer Staples
-TT,Industrials
-TTD,Communication Services
-TTWO,Communication Services
-TXN,Information Technology
-TXT,Industrials
-TYL,Information Technology
-UAL,Industrials
-UBER,Industrials
-UDR,Real Estate
-UHS,Health Care
-ULTA,Consumer Discretionary
-UNH,Health Care
-UNP,Industrials
-UPS,Industrials
-URI,Industrials
-USB,Financials
-V,Financials
-VICI,Real Estate
-VLO,Energy
-VLTO,Industrials
-VMC,Materials
-VRSK,Industrials
-VRSN,Information Technology
-VRTX,Health Care
-VST,Utilities
-VTR,Real Estate
-VTRS,Health Care
-VZ,Communication Services
-WAB,Industrials
-WAT,Health Care
-WBD,Communication Services
-WDAY,Information Technology
-WDC,Information Technology
-WEC,Utilities
-WELL,Real Estate
-WFC,Financials
-WM,Industrials
-WMB,Energy
-WMT,Consumer Staples
-WRB,Financials
-WSM,Consumer Discretionary
-WST,Health Care
-WTW,Financials
-WY,Real Estate
-WYNN,Consumer Discretionary
-XEL,Utilities
-XOM,Energy
-XYL,Industrials
-XYZ,Financials
-YUM,Consumer Discretionary
-ZBH,Health Care
-ZBRA,Information Technology
-ZTS,Health Care
+A,Unknown
+AAPL,Unknown
+ABBV,Unknown
+ABNB,Unknown
+ABT,Unknown
+ACGL,Unknown
+ACN,Unknown
+ADBE,Unknown
+ADI,Unknown
+ADM,Unknown
+ADP,Unknown
+ADSK,Unknown
+AEE,Unknown
+AEP,Unknown
+AES,Unknown
+AFL,Unknown
+AIG,Unknown
+AIZ,Unknown
+AJG,Unknown
+AKAM,Unknown
+ALB,Unknown
+ALGN,Unknown
+ALL,Unknown
+ALLE,Unknown
+AMAT,Unknown
+AMCR,Unknown
+AMD,Unknown
+AME,Unknown
+AMGN,Unknown
+AMP,Unknown
+AMT,Unknown
+AMZN,Unknown
+ANET,Unknown
+AON,Unknown
+AOS,Unknown
+APA,Unknown
+APD,Unknown
+APH,Unknown
+APO,Unknown
+APP,Unknown
+APTV,Unknown
+ARE,Unknown
+ARES,Unknown
+ATO,Unknown
+AVB,Unknown
+AVGO,Unknown
+AVY,Unknown
+AWK,Unknown
+AXON,Unknown
+AXP,Unknown
+AZO,Unknown
+BA,Unknown
+BAC,Unknown
+BALL,Unknown
+BAX,Unknown
+BBY,Unknown
+BDX,Unknown
+BEN,Unknown
+BF.B,Unknown
+BG,Unknown
+BIIB,Unknown
+BK,Unknown
+BKNG,Unknown
+BKR,Unknown
+BLDR,Unknown
+BLK,Unknown
+BMY,Unknown
+BR,Unknown
+BRK.B,Unknown
+BRO,Unknown
+BSX,Unknown
+BX,Unknown
+BXP,Unknown
+C,Unknown
+CAG,Unknown
+CAH,Unknown
+CARR,Unknown
+CAT,Unknown
+CB,Unknown
+CBOE,Unknown
+CBRE,Unknown
+CCI,Unknown
+CCL,Unknown
+CDNS,Unknown
+CDW,Unknown
+CEG,Unknown
+CF,Unknown
+CFG,Unknown
+CHD,Unknown
+CHRW,Unknown
+CHTR,Unknown
+CI,Unknown
+CINF,Unknown
+CL,Unknown
+CLX,Unknown
+CMCSA,Unknown
+CME,Unknown
+CMG,Unknown
+CMI,Unknown
+CMS,Unknown
+CNC,Unknown
+CNP,Unknown
+COF,Unknown
+COIN,Unknown
+COO,Unknown
+COP,Unknown
+COR,Unknown
+COST,Unknown
+CPAY,Unknown
+CPB,Unknown
+CPRT,Unknown
+CPT,Unknown
+CRH,Unknown
+CRL,Unknown
+CRM,Unknown
+CRWD,Unknown
+CSCO,Unknown
+CSGP,Unknown
+CSX,Unknown
+CTAS,Unknown
+CTRA,Unknown
+CTSH,Unknown
+CTVA,Unknown
+CVNA,Unknown
+CVS,Unknown
+CVX,Unknown
+D,Unknown
+DAL,Unknown
+DASH,Unknown
+DAY,Unknown
+DD,Unknown
+DDOG,Unknown
+DE,Unknown
+DECK,Unknown
+DELL,Unknown
+DG,Unknown
+DGX,Unknown
+DHI,Unknown
+DHR,Unknown
+DIS,Unknown
+DLR,Unknown
+DLTR,Unknown
+DOC,Unknown
+DOV,Unknown
+DOW,Unknown
+DPZ,Unknown
+DRI,Unknown
+DTE,Unknown
+DUK,Unknown
+DVA,Unknown
+DVN,Unknown
+DXCM,Unknown
+EA,Unknown
+EBAY,Unknown
+ECL,Unknown
+ED,Unknown
+EFX,Unknown
+EG,Unknown
+EIX,Unknown
+EL,Unknown
+ELV,Unknown
+EME,Unknown
+EMR,Unknown
+EOG,Unknown
+EPAM,Unknown
+EQIX,Unknown
+EQR,Unknown
+EQT,Unknown
+ERIE,Unknown
+ES,Unknown
+ESS,Unknown
+ETN,Unknown
+ETR,Unknown
+EVRG,Unknown
+EW,Unknown
+EXC,Unknown
+EXE,Unknown
+EXPD,Unknown
+EXPE,Unknown
+EXR,Unknown
+F,Unknown
+FANG,Unknown
+FAST,Unknown
+FCX,Unknown
+FDS,Unknown
+FDX,Unknown
+FE,Unknown
+FFIV,Unknown
+FICO,Unknown
+FIS,Unknown
+FISV,Unknown
+FITB,Unknown
+FIX,Unknown
+FOX,Unknown
+FOXA,Unknown
+FRT,Unknown
+FSLR,Unknown
+FTNT,Unknown
+FTV,Unknown
+GD,Unknown
+GDDY,Unknown
+GE,Unknown
+GEHC,Unknown
+GEN,Unknown
+GEV,Unknown
+GILD,Unknown
+GIS,Unknown
+GL,Unknown
+GLW,Unknown
+GM,Unknown
+GNRC,Unknown
+GOOG,Unknown
+GOOGL,Unknown
+GPC,Unknown
+GPN,Unknown
+GRMN,Unknown
+GS,Unknown
+GWW,Unknown
+HAL,Unknown
+HAS,Unknown
+HBAN,Unknown
+HCA,Unknown
+HD,Unknown
+HIG,Unknown
+HII,Unknown
+HLT,Unknown
+HOLX,Unknown
+HON,Unknown
+HOOD,Unknown
+HPE,Unknown
+HPQ,Unknown
+HRL,Unknown
+HSIC,Unknown
+HST,Unknown
+HSY,Unknown
+HUBB,Unknown
+HUM,Unknown
+HWM,Unknown
+IBKR,Unknown
+IBM,Unknown
+ICE,Unknown
+IDXX,Unknown
+IEX,Unknown
+IFF,Unknown
+INCY,Unknown
+INTC,Unknown
+INTU,Unknown
+INVH,Unknown
+IP,Unknown
+IQV,Unknown
+IR,Unknown
+IRM,Unknown
+ISRG,Unknown
+IT,Unknown
+ITW,Unknown
+IVZ,Unknown
+J,Unknown
+JBHT,Unknown
+JBL,Unknown
+JCI,Unknown
+JKHY,Unknown
+JNJ,Unknown
+JPM,Unknown
+KDP,Unknown
+KEY,Unknown
+KEYS,Unknown
+KHC,Unknown
+KIM,Unknown
+KKR,Unknown
+KLAC,Unknown
+KMB,Unknown
+KMI,Unknown
+KO,Unknown
+KR,Unknown
+KVUE,Unknown
+L,Unknown
+LDOS,Unknown
+LEN,Unknown
+LH,Unknown
+LHX,Unknown
+LII,Unknown
+LIN,Unknown
+LLY,Unknown
+LMT,Unknown
+LNT,Unknown
+LOW,Unknown
+LRCX,Unknown
+LULU,Unknown
+LUV,Unknown
+LVS,Unknown
+LW,Unknown
+LYB,Unknown
+LYV,Unknown
+MA,Unknown
+MAA,Unknown
+MAR,Unknown
+MAS,Unknown
+MCD,Unknown
+MCHP,Unknown
+MCK,Unknown
+MCO,Unknown
+MDLZ,Unknown
+MDT,Unknown
+MET,Unknown
+META,Unknown
+MGM,Unknown
+MKC,Unknown
+MLM,Unknown
+MMM,Unknown
+MNST,Unknown
+MO,Unknown
+MOH,Unknown
+MOS,Unknown
+MPC,Unknown
+MPWR,Unknown
+MRK,Unknown
+MRNA,Unknown
+MS,Unknown
+MSCI,Unknown
+MSFT,Unknown
+MSI,Unknown
+MTB,Unknown
+MTCH,Unknown
+MTD,Unknown
+MU,Unknown
+NCLH,Unknown
+NDAQ,Unknown
+NDSN,Unknown
+NEE,Unknown
+NEM,Unknown
+NFLX,Unknown
+NI,Unknown
+NKE,Unknown
+NOC,Unknown
+NOW,Unknown
+NRG,Unknown
+NSC,Unknown
+NTAP,Unknown
+NTRS,Unknown
+NUE,Unknown
+NVDA,Unknown
+NVR,Unknown
+NWS,Unknown
+NWSA,Unknown
+NXPI,Unknown
+O,Unknown
+ODFL,Unknown
+OKE,Unknown
+OMC,Unknown
+ON,Unknown
+ORCL,Unknown
+ORLY,Unknown
+OTIS,Unknown
+OXY,Unknown
+PANW,Unknown
+PAYC,Unknown
+PAYX,Unknown
+PCAR,Unknown
+PCG,Unknown
+PEG,Unknown
+PEP,Unknown
+PFE,Unknown
+PFG,Unknown
+PG,Unknown
+PGR,Unknown
+PH,Unknown
+PHM,Unknown
+PKG,Unknown
+PLD,Unknown
+PLTR,Unknown
+PM,Unknown
+PNC,Unknown
+PNR,Unknown
+PNW,Unknown
+PODD,Unknown
+POOL,Unknown
+PPG,Unknown
+PPL,Unknown
+PRU,Unknown
+PSA,Unknown
+PSKY,Unknown
+PSX,Unknown
+PTC,Unknown
+PWR,Unknown
+PYPL,Unknown
+Q,Unknown
+QCOM,Unknown
+RCL,Unknown
+REG,Unknown
+REGN,Unknown
+RF,Unknown
+RJF,Unknown
+RL,Unknown
+RMD,Unknown
+ROK,Unknown
+ROL,Unknown
+ROP,Unknown
+ROST,Unknown
+RSG,Unknown
+RTX,Unknown
+RVTY,Unknown
+SBAC,Unknown
+SBUX,Unknown
+SCHW,Unknown
+SHW,Unknown
+SJM,Unknown
+SLB,Unknown
+SMCI,Unknown
+SNA,Unknown
+SNDK,Unknown
+SNPS,Unknown
+SO,Unknown
+SOLV,Unknown
+SPG,Unknown
+SPGI,Unknown
+SRE,Unknown
+STE,Unknown
+STLD,Unknown
+STT,Unknown
+STX,Unknown
+STZ,Unknown
+SW,Unknown
+SWK,Unknown
+SWKS,Unknown
+SYF,Unknown
+SYK,Unknown
+SYY,Unknown
+T,Unknown
+TAP,Unknown
+TDG,Unknown
+TDY,Unknown
+TECH,Unknown
+TEL,Unknown
+TER,Unknown
+TFC,Unknown
+TGT,Unknown
+TJX,Unknown
+TKO,Unknown
+TMO,Unknown
+TMUS,Unknown
+TPL,Unknown
+TPR,Unknown
+TRGP,Unknown
+TRMB,Unknown
+TROW,Unknown
+TRV,Unknown
+TSCO,Unknown
+TSLA,Unknown
+TSN,Unknown
+TT,Unknown
+TTD,Unknown
+TTWO,Unknown
+TXN,Unknown
+TXT,Unknown
+TYL,Unknown
+UAL,Unknown
+UBER,Unknown
+UDR,Unknown
+UHS,Unknown
+ULTA,Unknown
+UNH,Unknown
+UNP,Unknown
+UPS,Unknown
+URI,Unknown
+USB,Unknown
+V,Unknown
+VICI,Unknown
+VLO,Unknown
+VLTO,Unknown
+VMC,Unknown
+VRSK,Unknown
+VRSN,Unknown
+VRTX,Unknown
+VST,Unknown
+VTR,Unknown
+VTRS,Unknown
+VZ,Unknown
+WAB,Unknown
+WAT,Unknown
+WBD,Unknown
+WDAY,Unknown
+WDC,Unknown
+WEC,Unknown
+WELL,Unknown
+WFC,Unknown
+WM,Unknown
+WMB,Unknown
+WMT,Unknown
+WRB,Unknown
+WSM,Unknown
+WST,Unknown
+WTW,Unknown
+WY,Unknown
+WYNN,Unknown
+XEL,Unknown
+XOM,Unknown
+XYL,Unknown
+XYZ,Unknown
+YUM,Unknown
+ZBH,Unknown
+ZBRA,Unknown
+ZTS,Unknown

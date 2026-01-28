@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 from dateutil import tz
 
-from src.io_atomic import write_parquet_atomic
-from src.reuse import should_skip
-from src.scoring_schema import load_schema, write_schema_provenance
+from .io_atomic import write_parquet_atomic
+from .reuse import should_skip
+from .scoring_schema import load_schema, write_schema_provenance
 
 NY = tz.gettz("America/New_York")
 
@@ -36,19 +36,6 @@ def _debug_env_stamp() -> None:
     except Exception as e:
         print("sha256 read failed:", e)
     print("===================================")
-
-
-def dump_df(df: pd.DataFrame, out_dir: Path, name: str) -> None:
-    """
-    Safe debug dump. Does NOT re-import or embed module content.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-    p = out_dir / f"{name}.parquet"
-    try:
-        write_parquet_atomic(df, p)
-        print(f"[debug] wrote {p}")
-    except Exception as e:
-        print(f"[debug] failed to write {p}: {e}")
 
 
 # =============================================================================
@@ -80,7 +67,6 @@ def default_paths(regime_id: str, schema_id: str) -> Paths:
     news_clusters_dir = derived / "news_clusters"
     rep_enriched_dir = derived / "rep_enriched"
 
-    # Canonical (regime + schema namespaced)
     out_features_dir = derived / "features_weekly" / f"regime={regime_id}" / f"schema={schema_id}"
     out_scores_dir = derived / "scores_weekly" / f"regime={regime_id}" / f"schema={schema_id}"
 
@@ -102,7 +88,6 @@ def default_paths(regime_id: str, schema_id: str) -> Paths:
 # Time helpers
 # =============================================================================
 def parse_week_end(s: str) -> datetime:
-    # YYYY-MM-DD (ET date representing week ending Friday)
     d = datetime.fromisoformat(s)
     return datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=NY)
 
@@ -118,13 +103,6 @@ def list_prior_weeks(week_end_et: datetime, n_weeks: int) -> List[str]:
 # =============================================================================
 # IO helpers
 # =============================================================================
-def load_week_parquet_required(base_dir: Path, week_end: str, filename: str) -> pd.DataFrame:
-    p = base_dir / f"week_ending={week_end}" / filename
-    if not p.exists():
-        raise FileNotFoundError(f"Missing required file: {p}")
-    return pd.read_parquet(p)
-
-
 def load_week_parquet_optional(base_dir: Path, week_end: str, filename: str) -> Optional[pd.DataFrame]:
     p = base_dir / f"week_ending={week_end}" / filename
     if not p.exists():
@@ -150,7 +128,7 @@ def winsorize(x: np.ndarray, zcap: float = 4.0) -> np.ndarray:
 
 
 def zscore_series(s: pd.Series, zcap: float = 4.0) -> pd.Series:
-    vals = s.astype(float).to_numpy()
+    vals = pd.to_numeric(s, errors="coerce").astype(float).to_numpy()
     mu = np.nanmean(vals)
     sd = np.nanstd(vals)
     if not np.isfinite(sd) or sd == 0:
@@ -171,7 +149,7 @@ def to_float(x, default: float = 0.0) -> float:
 
 
 # =============================================================================
-# Market features (minimal)
+# Market features
 # =============================================================================
 def market_features_for_week(
     candles_daily: pd.DataFrame,
@@ -179,72 +157,91 @@ def market_features_for_week(
     week_end: str,
 ) -> pd.DataFrame:
     """
-    Minimal market features used for VR_pct and optional z_AR5/z_VS.
+    Minimal market features:
+      - RV60 and VR_pct (ranked vol)
+      - AR5 and z_AR5 (5-trading-day return ending at asof_date)
 
-    Expected columns (either schema is fine):
-      - symbol, date, close, volume
+    Expected columns:
+      - symbol, date, close, volume (or Finnhub shorthand c/v)
     """
     cd = candles_daily.copy()
-    if "date" not in cd.columns or "symbol" not in cd.columns:
+    if "symbol" not in cd.columns or "date" not in cd.columns:
         raise ValueError("candles_daily.parquet must include columns: symbol,date")
 
+    cd["symbol"] = cd["symbol"].astype(str).str.upper().str.strip()
     cd["date"] = pd.to_datetime(cd["date"]).dt.date
-    target = datetime.fromisoformat(week_end).date()
 
-    # normalize column names
     if "close" not in cd.columns and "c" in cd.columns:
         cd = cd.rename(columns={"c": "close"})
     if "volume" not in cd.columns and "v" in cd.columns:
         cd = cd.rename(columns={"v": "volume"})
 
+    target = datetime.fromisoformat(week_end).date()
     syms = set(universe_syms) | {"SPY"}
-    cd = cd[cd["symbol"].isin(syms)]
+    cd = cd[cd["symbol"].isin(syms)].copy()
 
     # last available date <= target per symbol
-    last_dates_list: List[Dict[str, object]] = []
-    for sym, g in cd.groupby("symbol"):
-        d = g.loc[g["date"] <= target, "date"]
-        if not d.empty:
-            last_dates_list.append({"symbol": sym, "asof_date": d.max()})
-
-    last_dates = pd.DataFrame(last_dates_list)
+    last_dates = (
+        cd[cd["date"] <= target]
+        .groupby("symbol", as_index=False)["date"]
+        .max()
+        .rename(columns={"date": "asof_date"})
+    )
     if last_dates.empty:
-        raise RuntimeError("No trading data found for universe symbols.")
+        raise RuntimeError("No trading data found for universe symbols at or before week_end.")
 
-    def realized_vol(g: pd.DataFrame, end_date, lookback: int = 60) -> Optional[float]:
+    def realized_vol_60(g: pd.DataFrame, end_date, lookback: int = 60) -> Optional[float]:
         gg = g[g["date"] <= end_date].sort_values("date")
         if len(gg) < lookback + 1:
             return None
-        c = gg["close"].astype(float).to_numpy()
-        rets = np.diff(c[-(lookback + 1) :]) / (c[-(lookback + 1) : -1] + 1e-12)
+        c = pd.to_numeric(gg["close"], errors="coerce").astype(float).to_numpy()
+        c = c[-(lookback + 1) :]
+        if len(c) < lookback + 1 or not np.isfinite(c).all():
+            return None
+        rets = np.diff(c) / (c[:-1] + 1e-12)
         if rets.size < 2:
             return None
         return float(np.nanstd(rets, ddof=1))
 
-    rows: List[Tuple[str, str, float]] = []
+    def ar5_return(g: pd.DataFrame, end_date) -> Optional[float]:
+        gg = g[g["date"] <= end_date].sort_values("date")
+        if len(gg) < 6:
+            return None
+        c = pd.to_numeric(gg["close"], errors="coerce").astype(float).to_numpy()
+        c = c[-6:]
+        if len(c) < 6 or not np.isfinite(c).all():
+            return None
+        return float((c[-1] / (c[0] + 1e-12)) - 1.0)
+
+    rows: List[Tuple[str, str, float, float]] = []
     for sym in universe_syms:
         g = cd[cd["symbol"] == sym]
         if g.empty:
             continue
-        asof_date = last_dates.loc[last_dates["symbol"] == sym, "asof_date"]
-        if asof_date.empty:
+        asof_row = last_dates[last_dates["symbol"] == sym]
+        if asof_row.empty:
             continue
-        asof = asof_date.iloc[0]
-        rv60 = realized_vol(g, asof, lookback=60)
+        asof_date = asof_row["asof_date"].iloc[0]
+
+        rv60 = realized_vol_60(g, asof_date, lookback=60)
+        ar5 = ar5_return(g, asof_date)
         if rv60 is None:
             continue
-        rows.append((sym, str(asof), rv60))
+        if ar5 is None:
+            ar5 = 0.0
+        rows.append((sym, str(asof_date), float(rv60), float(ar5)))
 
-    mkt = pd.DataFrame(rows, columns=["symbol", "asof_date", "RV60"])
+    mkt = pd.DataFrame(rows, columns=["symbol", "asof_date", "RV60", "AR5"])
     if mkt.empty:
-        return pd.DataFrame(columns=["symbol", "asof_date", "RV60", "VR_pct"])
+        return pd.DataFrame(columns=["symbol", "asof_date", "RV60", "VR_pct", "AR5", "z_AR5"])
 
     mkt["VR_pct"] = mkt["RV60"].rank(pct=True)
+    mkt["z_AR5"] = zscore_series(mkt["AR5"])
     return mkt
 
 
 # =============================================================================
-# News feature panel (robust minimal, based on rep_enriched)
+# News feature panel (rep_enriched)
 # =============================================================================
 def compute_rep_sent_score_final(sent: dict) -> Tuple[float, float, str]:
     score = float(sent.get("sent_score", 0.0) or 0.0)
@@ -266,8 +263,8 @@ def compute_event_sev_final(evt: dict, unique_sources: float = 1.0) -> float:
     sev = float(evt.get("event_severity", 0.0) or 0.0)
     conf = float(evt.get("event_confidence", 0.0) or 0.0)
     etype = str(evt.get("event_type_primary", ""))
-    sev_adj = sev * conf
 
+    sev_adj = sev * conf
     if etype == "PRICE_ACTION_RECAP":
         sev_adj = min(sev_adj, 0.5)
     if etype == "MACRO_SECTOR":
@@ -302,9 +299,9 @@ def build_news_feature_panel(
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Normalize required columns
     if "symbol" not in df.columns:
         raise ValueError("rep_enriched missing required column: symbol")
+
     if "week_ending_date" not in df.columns:
         if "week_end" in df.columns:
             df = df.rename(columns={"week_end": "week_ending_date"})
@@ -321,16 +318,41 @@ def build_news_feature_panel(
         else:
             df["cluster_id"] = np.arange(len(df))
 
+    # numeric defaults
     if "cluster_size" not in df.columns:
         df["cluster_size"] = 1.0
     if "unique_sources" not in df.columns:
         df["unique_sources"] = 1.0
 
-    if "sentiment" not in df.columns:
+    # -------------------------------------------------------------------------
+    # Parse sentiment_json / event_json into dicts (your rep_enriched format)
+    # -------------------------------------------------------------------------
+    def _parse_json_cell(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return {}
+        if isinstance(x, dict):
+            return x
+        if isinstance(x, str):
+            s = x.strip()
+            if not s:
+                return {}
+            try:
+                return json.loads(s)
+            except Exception:
+                return {}
+        return {}
+
+    if "sentiment_json" in df.columns:
+        df["sentiment"] = df["sentiment_json"].apply(_parse_json_cell)
+    elif "sentiment" not in df.columns:
         df["sentiment"] = [{} for _ in range(len(df))]
-    if "event" not in df.columns:
+
+    if "event_json" in df.columns:
+        df["event"] = df["event_json"].apply(_parse_json_cell)
+    elif "event" not in df.columns:
         df["event"] = [{} for _ in range(len(df))]
 
+    # compute final per-rep fields
     sent_final = df["sentiment"].apply(lambda d: compute_rep_sent_score_final(d if isinstance(d, dict) else {}))
     df["sent_score_final"] = sent_final.apply(lambda t: t[0])
     df["sent_driver"] = sent_final.apply(lambda t: t[2])
@@ -343,6 +365,7 @@ def build_news_feature_panel(
         axis=1,
     )
 
+    # split current week vs history
     week_end_ts = pd.to_datetime(week_end).normalize()
     df_cur = df[df["week_ending_date"] == week_end_ts].copy()
     df_hist = df[df["week_ending_date"] != week_end_ts].copy()
@@ -353,6 +376,7 @@ def build_news_feature_panel(
             f"Available weeks: {sorted(df['week_ending_date'].dt.date.unique().tolist())}"
         )
 
+    # current counts per symbol (dedup clusters)
     cur_counts = (
         df_cur.groupby("symbol", as_index=False)
         .agg(
@@ -362,6 +386,7 @@ def build_news_feature_panel(
         )
     )
 
+    # historical weekly counts (dedup clusters)
     hist_by_week = (
         df_hist.groupby(["week_ending_date", "symbol"], as_index=False)
         .agg(count_week=("cluster_id", "nunique"))
@@ -376,45 +401,50 @@ def build_news_feature_panel(
 
     if not hist_by_week.empty:
         hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
-        hist_latest = hist_by_week.groupby("symbol", as_index=False).tail(1)[
-            ["symbol", "count_20d_dedup", "count_60d_dedup"]
-        ]
+        hist_latest = (
+            hist_by_week.groupby("symbol", as_index=False)
+            .tail(1)[["symbol", "count_20d_dedup", "count_60d_dedup"]]
+        )
     else:
         hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
 
     cur = cur_counts.merge(hist_latest, on="symbol", how="left")
-    cur["count_20d_dedup"] = cur["count_20d_dedup"].fillna(0.0)
-    cur["count_60d_dedup"] = cur["count_60d_dedup"].fillna(0.0)
+    cur["count_20d_dedup"] = pd.to_numeric(cur["count_20d_dedup"], errors="coerce").fillna(0.0)
+    cur["count_60d_dedup"] = pd.to_numeric(cur["count_60d_dedup"], errors="coerce").fillna(0.0)
 
+    # novelty proxies
     cur["NV_raw"] = np.log1p(cur["count_5d_dedup"]) - np.log1p(cur["count_60d_dedup"] / 12.0 + 1e-12)
     cur["NA_raw"] = np.log1p(cur["count_5d_dedup"]) - np.log1p(cur["count_20d_dedup"] / 4.0 + 1e-12)
 
+    # sentiment signal: current week mean minus history mean
     sent_cur = df_cur.groupby("symbol", as_index=False).agg(sent_5d=("sent_score_final", "mean"))
     if not df_hist.empty:
         sent_hist = df_hist.groupby("symbol", as_index=False).agg(sent_60d=("sent_score_final", "mean"))
     else:
-        sent_hist = pd.DataFrame(columns=["symbol", "sent_60d"])
+        sent_hist = pd.DataFrame({"symbol": [], "sent_60d": []})
+
     ss = sent_cur.merge(sent_hist, on="symbol", how="left")
-    ss["sent_60d"] = ss["sent_60d"].fillna(0.0)
+    ss["sent_60d"] = pd.to_numeric(ss["sent_60d"], errors="coerce").fillna(0.0)
     ss["SS_raw"] = ss["sent_5d"] - ss["sent_60d"]
 
+    # event intensity: sum of sev_final this week
     ei = df_cur.groupby("symbol", as_index=False).agg(EI_raw=("sev_final", "sum"))
 
     out = cur.merge(ss[["symbol", "SS_raw"]], on="symbol", how="left").merge(ei, on="symbol", how="left")
-    out["EI_raw"] = out["EI_raw"].fillna(0.0)
-    out["SS_raw"] = out["SS_raw"].fillna(0.0)
+    out["EI_raw"] = pd.to_numeric(out["EI_raw"], errors="coerce").fillna(0.0)
+    out["SS_raw"] = pd.to_numeric(out["SS_raw"], errors="coerce").fillna(0.0)
 
+    # placeholder kept for compatibility
     out["NS_raw"] = 0.0
-
     out["week_ending_date"] = week_end_ts
 
-    univ_syms = universe[["symbol"]].copy()
-    out = univ_syms.merge(out, on="symbol", how="left")
+    # ensure all universe symbols exist
+    out = universe[["symbol"]].merge(out, on="symbol", how="left")
 
     for col in ["NV_raw", "NA_raw", "NS_raw", "SS_raw", "EI_raw", "EC_raw"]:
         if col not in out.columns:
             out[col] = 0.0
-        out[col] = out[col].astype(float).fillna(0.0)
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
 
     return out
 
@@ -444,20 +474,28 @@ def validate_feature_panel_contract(panel: pd.DataFrame, context: str = "feature
 
 
 def compute_scores(
-    panel: pd.DataFrame, mkt: pd.DataFrame, universe: pd.DataFrame, schema_id: str
+    panel: pd.DataFrame,
+    mkt: pd.DataFrame,
+    universe: pd.DataFrame,
+    schema_id: str,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     df = panel.merge(universe, on="symbol", how="left")
 
+    # zscore raw features cross-sectionally
     for c in ["NV_raw", "NA_raw", "NS_raw", "SS_raw", "EI_raw", "EC_raw"]:
         df[f"z_{c}"] = zscore_series(df[c])
 
+    # market merge
     if not mkt.empty:
-        df = df.merge(mkt[["symbol", "asof_date", "VR_pct"]], on="symbol", how="left")
+        df = df.merge(mkt[["symbol", "asof_date", "VR_pct", "AR5", "z_AR5"]], on="symbol", how="left")
     else:
         df["asof_date"] = None
         df["VR_pct"] = np.nan
+        df["AR5"] = np.nan
+        df["z_AR5"] = 0.0
 
-    df["VR_pct"] = df["VR_pct"].astype(float).fillna(0.0)
+    df["VR_pct"] = pd.to_numeric(df["VR_pct"], errors="coerce").fillna(0.0)
+    df["z_AR5"] = pd.to_numeric(df["z_AR5"], errors="coerce").fillna(0.0)
 
     schema = load_schema(schema_id)
     weights: Dict[str, float] = schema.get_weights()
@@ -468,21 +506,54 @@ def compute_scores(
                 return float(weights[k])
         return 0.0
 
-    w_nv = pick_weight(["NV", "NV_raw"])
-    w_na = pick_weight(["NA", "NA_raw"])
-    w_ns = pick_weight(["NS", "NS_raw"])
-    w_ss = pick_weight(["SS", "SS_raw"])
-    w_ei = pick_weight(["EI", "EVS", "EI_raw"])
-    w_ec = pick_weight(["EC", "EC_raw"])
+    # Branch 1: factor schema
+    has_factor_schema = any(k in weights for k in ["novelty", "event_intensity", "sentiment", "divergence"])
+    if has_factor_schema:
+        w_nov = pick_weight(["novelty"])
+        w_ei = pick_weight(["event_intensity"])
+        w_sent = pick_weight(["sentiment"])
+        w_div = pick_weight(["divergence"])
 
-    df["UPS_raw"] = (
-        w_nv * df["z_NV_raw"]
-        + w_na * df["z_NA_raw"]
-        + w_ns * df["z_NS_raw"]
-        + w_ss * df["z_SS_raw"]
-        + w_ei * df["z_EI_raw"]
-        + w_ec * df["z_EC_raw"]
-    )
+        if (w_nov + w_ei + w_sent + w_div) == 0.0:
+            raise ValueError(
+                f"Schema {schema_id} has factor keys but resolved all factor weights to 0. "
+                f"weights keys={list(weights.keys())}"
+            )
+
+        df["novelty_factor"] = 0.5 * df["z_NV_raw"] + 0.5 * df["z_NA_raw"]
+        df["event_intensity_factor"] = 0.5 * df["z_EI_raw"] + 0.5 * df["z_EC_raw"]
+        df["sentiment_factor"] = df["z_SS_raw"]
+        df["divergence_factor"] = (df["z_AR5"] - df["z_SS_raw"]).abs()
+
+        df["UPS_raw"] = (
+            w_nov * df["novelty_factor"]
+            + w_ei * df["event_intensity_factor"]
+            + w_sent * df["sentiment_factor"]
+            + w_div * df["divergence_factor"]
+        )
+    else:
+        # Branch 2: legacy weights
+        w_nv = pick_weight(["NV", "NV_raw"])
+        w_na = pick_weight(["NA", "NA_raw"])
+        w_ns = pick_weight(["NS", "NS_raw"])
+        w_ss = pick_weight(["SS", "SS_raw"])
+        w_ei = pick_weight(["EI", "EVS", "EI_raw"])
+        w_ec = pick_weight(["EC", "EC_raw"])
+
+        if (w_nv + w_na + w_ns + w_ss + w_ei + w_ec) == 0.0:
+            raise ValueError(
+                f"Schema {schema_id} resolved all legacy weights to 0. "
+                f"weights keys={list(weights.keys())}"
+            )
+
+        df["UPS_raw"] = (
+            w_nv * df["z_NV_raw"]
+            + w_na * df["z_NA_raw"]
+            + w_ns * df["z_NS_raw"]
+            + w_ss * df["z_SS_raw"]
+            + w_ei * df["z_EI_raw"]
+            + w_ec * df["z_EC_raw"]
+        )
 
     df["UPS_adj"] = df["UPS_raw"] * (1.0 - 0.25 * df["VR_pct"])
     df["rank_UPS"] = df["UPS_adj"].rank(ascending=False, method="first")
@@ -503,18 +574,17 @@ def compute_scores(
         "z_EI_raw",
         "z_EC_raw",
         "VR_pct",
-    ]
-    features = df[[c for c in features_cols if c in df.columns]].copy()
-
-    scores_cols = [
-        "symbol",
-        "sector",
-        "asof_date",
+        "AR5",
+        "z_AR5",
         "UPS_raw",
         "UPS_adj",
-        "rank_UPS",
-        "VR_pct",
     ]
+    if "novelty_factor" in df.columns:
+        features_cols += ["novelty_factor", "event_intensity_factor", "sentiment_factor", "divergence_factor"]
+
+    features = df[[c for c in features_cols if c in df.columns]].copy()
+
+    scores_cols = ["symbol", "sector", "asof_date", "UPS_raw", "UPS_adj", "rank_UPS", "VR_pct"]
     scores = df[[c for c in scores_cols if c in df.columns]].copy()
 
     return features, scores
@@ -549,6 +619,7 @@ def run(
 
     if not paths.market_daily_path.exists():
         raise FileNotFoundError(f"Missing daily candles file: {paths.market_daily_path}")
+
     candles_daily = pd.read_parquet(paths.market_daily_path)
     mkt = market_features_for_week(candles_daily, universe_syms, week_end)
 
@@ -624,4 +695,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
