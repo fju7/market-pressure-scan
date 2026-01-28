@@ -32,6 +32,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Guard - only proceed at 6:35pm ET Friday (scheduled only)
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
@@ -156,12 +162,6 @@ jobs:
           for k, p in paths.items():
               print(f"{k:20s} exists={p.exists()}  path={p}")
           PY
-
-      - name: Install deps
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
 
       - name: Preflight – Python syntax check
         run: |
