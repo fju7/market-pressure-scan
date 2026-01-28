@@ -4,55 +4,14 @@ on:
   schedule:
     # Run at 6:35pm New York time year-round (23:35 UTC Friday; guard handles DST)
     - cron: "35 23 * * 5"
-  workflow_dispatch:
-    inputs:
-      week_end:
-        description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
-        required: false
-        default: ""
+  "clusters.parquet",
+              "enriched":       derived / "rep_enriched"    / f"week_ending={week_end}" / "rep_enriched.parquet",
+          }
 
-concurrency:
-  group: market-pressure-scan-${{ github.ref }}-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
-  cancel-in-progress: ${{ github.event_name == 'schedule' }}
-
-jobs:
-  run-pipeline:
-    runs-on: ubuntu-latest
-    outputs:
-      week_end: ${{ steps.week_end.outputs.week_end }}
-    permissions:
-      contents: read
-      issues: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Guard - only proceed at 6:35pm ET Friday (scheduled only)
-        env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: |
-          python - <<'PY'
-          import datetime as dt
-          from zoneinfo import ZoneInfo
-          import os
-
-          event = os.environ.get("GITHUB_EVENT_NAME", "")
-
-          # Only enforce time guard for scheduled runs
-          if event == "schedule":
-              now = dt.datetime.now(ZoneInfo("America/New_York"))
-              if not (now.weekday() == 4 and now.hour == 18 and now.minute == 35):
-                  print(f"Not 6:35pm ET Friday (now={now}). Exiting successfully.")
-                  raise SystemExit(0)
-              print(f"Guard passed for scheduled run: now={now}")
-          else:
-              print(f"Manual run (event={event}), bypassing time guard. Proceeding.")
+          print("root:", root)
+          print("derived:", derived)
+          for k, p in paths.items():
+              print(f"{k:14s} exists={p.exists()}  path={p}")
           PY
 
       - name: Install deps
@@ -85,55 +44,6 @@ jobs:
           test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
           test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
           echo "✓ Required secrets present"
-
-      - name: Universe sanity check
-        run: |
-          set -euo pipefail
-          echo "UNIVERSE PATH: sp500_universe.csv"
-          test -f sp500_universe.csv || (echo "❌ sp500_universe.csv missing at repo root" && exit 1)
-          wc -l sp500_universe.csv
-          echo "---"
-          head -5 sp500_universe.csv
-          echo "..."
-          tail -3 sp500_universe.csv
-
-      - name: Determine week_end
-        id: week_end
-        shell: bash
-        run: |
-          set -euo pipefail
-          WEEK_END="${{ github.event.inputs.week_end }}"
-
-          if [ -z "$WEEK_END" ]; then
-            # Auto-compute: today if Friday else last Friday (ET)
-            WEEK_END=$(python - <<'PY'
-          import datetime as dt
-          from zoneinfo import ZoneInfo
-          today = dt.datetime.now(ZoneInfo("America/New_York")).date()
-          if today.weekday() == 4:
-              week_end = today
-          else:
-              days_since_fri = (today.weekday() - 4) % 7
-              week_end = today - dt.timedelta(days=days_since_fri)
-          print(week_end.isoformat())
-          PY
-          )
-          fi
-
-          # Validate week_end format (strict ISO date check)
-          python - <<PY
-          import sys, datetime as dt
-          s = "${WEEK_END}"
-          try:
-              dt.date.fromisoformat(s)
-          except Exception:
-              print(f"Invalid week_end: {s!r} (expected YYYY-MM-DD)", file=sys.stderr)
-              sys.exit(2)
-          PY
-
-          echo "$WEEK_END" > "$GITHUB_WORKSPACE/week_end.txt"
-          echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
-          echo "✓ Week ending: $WEEK_END"
 
       - name: Preflight - import smoke test (cluster_news has run)
         run: |
@@ -366,4 +276,141 @@ jobs:
               page += 1;
             }
 
-            console.log(`Closed ${closed} old weekly-scan issue(s).`);
+            conworkflow_dispatch:
+    inputs:
+      week_end:
+        description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
+        required: false
+        default: ""
+
+concurrency:
+  group: market-pressure-scan-${{ github.ref }}-${{ github.event_name }}-${{ github.event.inputs.week_end || 'auto' }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    outputs:
+      week_end: ${{ steps.week_end.outputs.week_end }}
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Guard - only proceed at 6:35pm ET Friday (scheduled only)
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          from zoneinfo import ZoneInfo
+          import os
+
+          event = os.environ.get("GITHUB_EVENT_NAME", "")
+
+          # Only enforce time guard for scheduled runs
+          if event == "schedule":
+              now = dt.datetime.now(ZoneInfo("America/New_York"))
+              if not (now.weekday() == 4 and now.hour == 18 and now.minute == 35):
+                  print(f"Not 6:35pm ET Friday (now={now}). Exiting successfully.")
+                  raise SystemExit(0)
+              print(f"Guard passed for scheduled run: now={now}")
+          else:
+              print(f"Manual run (event={event}), bypassing time guard. Proceeding.")
+          PY
+
+      # (Optional) Universe sanity check
+      - name: Universe sanity check
+        run: |
+          set -euo pipefail
+          echo "UNIVERSE PATH: sp500_universe.csv"
+          test -f sp500_universe.csv || (echo "❌ sp500_universe.csv missing at repo root" && exit 1)
+          wc -l sp500_universe.csv
+          echo "---"
+          head -5 sp500_universe.csv
+          echo "..."
+          tail -3 sp500_universe.csv
+
+      - name: Determine week_end
+        id: week_end
+        shell: bash
+        run: |
+          set -euo pipefail
+          WEEK_END="${{ github.event.inputs.week_end }}"
+
+          if [ -z "$WEEK_END" ]; then
+            # Auto-compute: today if Friday else last Friday (ET)
+            WEEK_END=$(python - <<'PY'
+          import datetime as dt
+          from zoneinfo import ZoneInfo
+          today = dt.datetime.now(ZoneInfo("America/New_York")).date()
+          if today.weekday() == 4:
+              week_end = today
+          else:
+              days_since_fri = (today.weekday() - 4) % 7
+              week_end = today - dt.timedelta(days=days_since_fri)
+          print(week_end.isoformat())
+          PY
+          )
+          fi
+
+          # Validate week_end format (strict ISO date check)
+          python - <<PY
+          import sys, datetime as dt
+          s = "${WEEK_END}"
+          try:
+              dt.date.fromisoformat(s)
+          except Exception:
+              print(f"Invalid week_end: {s!r} (expected YYYY-MM-DD)", file=sys.stderr)
+              sys.exit(2)
+          PY
+
+          echo "$WEEK_END" > "$GITHUB_WORKSPACE/week_end.txt"
+          echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
+          echo "✓ Week ending: $WEEK_END"
+
+      - name: Preflight – resolved artifact paths (canonical)
+        shell: bash
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+          REGIME_ID: news-novelty-v1
+          SCHEMA_ID: news-novelty-v1b
+        run: |
+          set -euo pipefail
+          echo "GIT_SHA=$(git rev-parse HEAD)"
+          echo "WEEK_END=${WEEK_END}"
+          echo "REGIME_ID=${REGIME_ID}"
+          echo "SCHEMA_ID=${SCHEMA_ID}"
+          echo "pwd=$(pwd)"
+
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          root = Path(".").resolve()
+          derived = root / "data" / "derived"
+
+          week_end = os.environ["WEEK_END"]
+          regime = os.environ["REGIME_ID"]
+          schema = os.environ["SCHEMA_ID"]
+
+          paths = {
+              "features_canon": derived / "features_weekly" / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "features_weekly.parquet",
+              "scores_canon":   derived / "scores_weekly"   / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet",
+              "clusters":       derived / "news_clusters"   / f"week_ending={week_end}" / "clusters.parquet",
+              "enriched":       derived / "rep_enriched"    / f"week_ending={week_end}" / "rep_enriched.parquet",
+          }
+
+          print("root:", root)
+          print("derived:", derived)
+          for k, p in paths.items():
+              print(f"{k:14s} exists={p.exists()}  path={p}")
+          PY
