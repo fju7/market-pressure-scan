@@ -4,279 +4,7 @@ on:
   schedule:
     # Run at 6:35pm New York time year-round (23:35 UTC Friday; guard handles DST)
     - cron: "35 23 * * 5"
-  "clusters.parquet",
-              "enriched":       derived / "rep_enriched"    / f"week_ending={week_end}" / "rep_enriched.parquet",
-          }
-
-          print("root:", root)
-          print("derived:", derived)
-          for k, p in paths.items():
-              print(f"{k:14s} exists={p.exists()}  path={p}")
-          PY
-
-      - name: Install deps
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Preflight – Python syntax check
-        run: |
-          set -euo pipefail
-          python -m compileall -q src
-
-      - name: Build stamp
-        run: |
-          set -euo pipefail
-          echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_ENV
-          echo "RUN_ATTEMPT=${{ github.run_attempt }}" >> $GITHUB_ENV
-          echo "RUN_TRIGGER=${{ github.event_name }}" >> $GITHUB_ENV
-          echo "WEEK_END_REQUESTED=${{ github.event.inputs.week_end }}" >> $GITHUB_ENV
-          echo "RUN_STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
-
-      - name: Verify required secrets present
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          set -euo pipefail
-          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
-          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
-          echo "✓ Required secrets present"
-
-      - name: Preflight - import smoke test (cluster_news has run)
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import src.cluster_news as m
-          print("cluster_news module:", m.__file__)
-          print("hasattr(run):", hasattr(m, "run"))
-          assert hasattr(m, "run"), "src.cluster_news must define run() at module scope"
-          import inspect
-          print("run source head:", inspect.getsource(m.run).splitlines()[0])
-          PY
-
-      - name: Run weekly pipeline
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          set -euo pipefail
-          WEEK_END="${{ steps.week_end.outputs.week_end }}"
-          python -m src.run_weekly_pipeline --week_end "$WEEK_END" --max_clusters_per_symbol 1 --skip_backtest
-          python -m src.update_weekly_pnl --week_end "$WEEK_END"
-          python -m src.scoreboard
-          python -m src.trader_sheet --week_end "$WEEK_END"
-          python -m src.log_week_decision --week_end "$WEEK_END"
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trader-sheet-and-report
-          path: |
-            week_end.txt
-            data/derived/trader_sheets/**
-            data/derived/reports/**
-            data/derived/baskets/**
-            data/live/scoreboard.csv
-            data/live/weeks_log.csv
-
-      - name: Create notification issue
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const week_end = '${{ steps.week_end.outputs.week_end }}';
-            const status = '${{ job.status }}';
-            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-
-            // Read scoreboard
-            let scoreboardSnippet = 'Scoreboard not available';
-            try {
-              const scoreboard = fs.readFileSync('data/live/scoreboard.csv', 'utf8');
-              const lines = scoreboard.split('\n').slice(0, 10);
-              scoreboardSnippet = "```\n" + lines.join("\n") + "\n```";
-            } catch (e) {
-              scoreboardSnippet = 'Could not read scoreboard';
-            }
-
-            // Read basket for action + top symbols (canonical source)
-            let actionDecision = 'UNKNOWN';
-            let topSymbols = 'Not available';
-            let basketSize = 0;
-            let overlapPct = null;
-            let turnoverPct = null;
-
-            try {
-              const basketPath = `data/derived/baskets/week_ending=${week_end}/basket.csv`;
-              const basketCsv = fs.readFileSync(basketPath, 'utf8').trim();
-              const rows = basketCsv.split('\n').filter(r => r.trim().length > 0);
-
-              // Parse header to find column indices
-              const header = rows[0].split(',');
-              const actionIdx = header.indexOf('action');
-              const reasonIdx = header.indexOf('reason');
-              const symbolIdx = header.indexOf('symbol');
-              const upsIdx = header.indexOf('UPS_adj');
-              const convictionIdx = header.indexOf('conviction');
-
-              // Parse first data row to read action
-              const firstRow = rows[1]?.split(',') || [];
-              const action = actionIdx >= 0 ? (firstRow[actionIdx] || '').trim() : '';
-
-              if (action === 'SKIP') {
-                actionDecision = '⏸️ SKIP';
-                const reason = reasonIdx >= 0 ? (firstRow[reasonIdx] || '').trim() : 'Low-information week';
-                topSymbols = reason || 'Low-information week';
-                basketSize = 0;
-              } else {
-                actionDecision = '📈 TRADE';
-
-                // Count symbol rows (exclude header)
-                const symbolRows = rows.slice(1).filter(r => r.trim());
-                basketSize = symbolRows.length;
-
-                // Top 5 from file order (already ranked by UPS)
-                const top5 = symbolRows.slice(0, 5).map(r => {
-                  const cols = r.split(',');
-                  const ticker = symbolIdx >= 0 ? (cols[symbolIdx] || '?').trim() : '?';
-                  const ups = upsIdx >= 0 ? (cols[upsIdx] || '?').trim() : '?';
-                  const conviction = convictionIdx >= 0 ? (cols[convictionIdx] || '?').trim() : '?';
-                  return `${ticker} (UPS: ${ups}, ${conviction})`;
-                });
-
-                topSymbols = top5.join('\n');
-              }
-            } catch (e) {
-              topSymbols = `Could not read basket: ${e.message}`;
-            }
-
-            // Read weeks_log for turnover metrics (optional)
-            try {
-              const weeksLog = fs.readFileSync('data/live/weeks_log.csv', 'utf8');
-              const lines = weeksLog.split('\n');
-              const currentWeekLine = lines.find(line => line.includes(week_end));
-
-              if (currentWeekLine) {
-                const cols = currentWeekLine.split(',');
-                // Assuming CSV columns: week_ending_date,action,basket_size,overlap_pct,turnover_pct,...
-                basketSize = parseInt(cols[2]) || basketSize;
-                overlapPct = parseFloat(cols[3]);
-                turnoverPct = parseFloat(cols[4]);
-              }
-            } catch (e) {
-              // weeks_log might not exist yet
-            }
-
-            const body = `@fju7 — Your weekly market pressure scan is ready!
-
-            ## 📊 Weekly Market Pressure Scan Complete
-
-            **Week Ending:** ${week_end}
-            **Status:** ${status === 'success' ? '✅ Success' : '❌ Failed'}
-            **Basket Size:** ${basketSize}${overlapPct !== null ? `\n**Overlap:** ${overlapPct.toFixed(1)}% | **Turnover:** ${turnoverPct.toFixed(1)}%` : ''}
-
-            ### ${actionDecision}
-
-            **Top 5 UPS Signals:**
-            \`\`\`
-            ${topSymbols}
-            \`\`\`
-
-            ### Quick Stats
-            ${scoreboardSnippet}
-
-            ### 🔗 Links
-            - **[📥 View Run & Download Artifacts](${runUrl})**
-            - Artifacts include: Trader Sheet, Weekly Report, Basket, Scoreboard
-
-            ---
-            *This issue auto-closes in 7 days*`;
-
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `📈 Weekly Scan: ${week_end}`,
-              body: body,
-              labels: ['weekly-scan', 'automated']
-            });
-
-            const issueNumber = parseInt(issue.data.number, 10);
-            if (!issueNumber || isNaN(issueNumber)) {
-              throw new Error(`Invalid issue number: ${issue.data.number}`);
-            }
-
-            const closeDate = new Date();
-            closeDate.setDate(closeDate.getDate() + 7);
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: `🤖 This issue will auto-close on ${closeDate.toISOString().split('T')[0]}`
-            });
-
-      - name: Auto-close old weekly-scan issues
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-
-            const cutoffDays = 7;
-            const now = new Date();
-            let closed = 0;
-            let page = 1;
-
-            while (true) {
-              const res = await github.rest.issues.listForRepo({
-                owner,
-                repo,
-                labels: 'weekly-scan',
-                state: 'open',
-                sort: 'created',
-                direction: 'asc',
-                per_page: 100,
-                page
-              });
-
-              if (!res.data || res.data.length === 0) break;
-
-              for (const issue of res.data) {
-                const created = new Date(issue.created_at);
-                const daysOld = (now - created) / (1000 * 60 * 60 * 24);
-
-                if (daysOld < cutoffDays) {
-                  console.log(`Hit issues newer than cutoff (${daysOld.toFixed(2)}d < ${cutoffDays}d). Stopping.`);
-                  console.log(`Closed ${closed} old weekly-scan issue(s).`);
-                  return;
-                }
-
-                await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  body: `🤖 Auto-closing: this weekly scan issue is ${daysOld.toFixed(1)} days old (>= ${cutoffDays}).`
-                });
-
-                await github.rest.issues.update({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  state: 'closed'
-                });
-
-                closed += 1;
-              }
-
-              page += 1;
-            }
-
-            conworkflow_dispatch:
+  workflow_dispatch:
     inputs:
       week_end:
         description: "Week ending date (YYYY-MM-DD). Leave blank to auto-compute."
@@ -315,8 +43,6 @@ jobs:
           import os
 
           event = os.environ.get("GITHUB_EVENT_NAME", "")
-
-          # Only enforce time guard for scheduled runs
           if event == "schedule":
               now = dt.datetime.now(ZoneInfo("America/New_York"))
               if not (now.weekday() == 4 and now.hour == 18 and now.minute == 35):
@@ -327,7 +53,6 @@ jobs:
               print(f"Manual run (event={event}), bypassing time guard. Proceeding.")
           PY
 
-      # (Optional) Universe sanity check
       - name: Universe sanity check
         run: |
           set -euo pipefail
@@ -347,7 +72,6 @@ jobs:
           WEEK_END="${{ github.event.inputs.week_end }}"
 
           if [ -z "$WEEK_END" ]; then
-            # Auto-compute: today if Friday else last Friday (ET)
             WEEK_END=$(python - <<'PY'
           import datetime as dt
           from zoneinfo import ZoneInfo
@@ -362,7 +86,6 @@ jobs:
           )
           fi
 
-          # Validate week_end format (strict ISO date check)
           python - <<PY
           import sys, datetime as dt
           s = "${WEEK_END}"
@@ -375,9 +98,10 @@ jobs:
 
           echo "$WEEK_END" > "$GITHUB_WORKSPACE/week_end.txt"
           echo "week_end=$WEEK_END" >> "$GITHUB_OUTPUT"
+          echo "WEEK_END=$WEEK_END" >> "$GITHUB_ENV"
           echo "✓ Week ending: $WEEK_END"
 
-      - name: Preflight – resolved artifact paths (canonical)
+      - name: Preflight – resolved artifact paths (canonical + legacy hints)
         shell: bash
         env:
           WEEK_END: ${{ steps.week_end.outputs.week_end }}
@@ -403,14 +127,103 @@ jobs:
           schema = os.environ["SCHEMA_ID"]
 
           paths = {
+              # Canonical target layout (what we want writer+reader to converge on)
               "features_canon": derived / "features_weekly" / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "features_weekly.parquet",
               "scores_canon":   derived / "scores_weekly"   / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet",
+
+              # Other required upstream artifacts
               "clusters":       derived / "news_clusters"   / f"week_ending={week_end}" / "clusters.parquet",
               "enriched":       derived / "rep_enriched"    / f"week_ending={week_end}" / "rep_enriched.parquet",
+
+              # Legacy hints (diagnostic only)
+              "features_regime_only": derived / "features_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet",
+              "features_flat":        derived / "features_weekly" / f"week_ending={week_end}" / "features_weekly.parquet",
+              "scores_flat":          derived / "scores_weekly"   / f"week_ending={week_end}" / "scores_weekly.parquet",
+              "scores_schema_only":   derived / "scores_weekly"   / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet",
           }
 
           print("root:", root)
           print("derived:", derived)
           for k, p in paths.items():
-              print(f"{k:14s} exists={p.exists()}  path={p}")
+              print(f"{k:20s} exists={p.exists()}  path={p}")
           PY
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Preflight – Python syntax check
+        run: |
+          set -euo pipefail
+          python -m compileall -q src
+
+      - name: Build stamp
+        run: |
+          set -euo pipefail
+          echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_ENV
+          echo "RUN_ATTEMPT=${{ github.run_attempt }}" >> $GITHUB_ENV
+          echo "RUN_TRIGGER=${{ github.event_name }}" >> $GITHUB_ENV
+          echo "WEEK_END_REQUESTED=${{ github.event.inputs.week_end }}" >> $GITHUB_ENV
+          echo "RUN_STARTED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+
+      - name: Verify required secrets present
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${FINNHUB_API_KEY}" || (echo "❌ FINNHUB_API_KEY secret missing" && exit 1)
+          test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
+          echo "✓ Required secrets present"
+
+      # ----------------------------
+      # Pipeline execution
+      # Adjust module names if yours differ.
+      # ----------------------------
+
+      - name: Run pipeline (ingest → cluster → enrich → score → report)
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+          REGIME_ID: news-novelty-v1
+          SCHEMA_ID: news-novelty-v1b
+        run: |
+          set -euo pipefail
+          echo "Running pipeline for WEEK_END=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID}"
+
+          # NOTE: Replace these with the exact module entrypoints used in your repo.
+          # The idea is: generate clusters/enriched first, then features+scores, then report.
+
+          python -m src.ingest_company_news --week_end "${WEEK_END}" --universe sp500_universe.csv
+          python -m src.cluster_news --week_end "${WEEK_END}" --regime "${REGIME_ID}"
+          python -m src.enrich_reps_openai --week_end "${WEEK_END}" --regime "${REGIME_ID}"
+
+          python -m src.features_scores \
+            --universe sp500_universe.csv \
+            --week_end "${WEEK_END}" \
+            --regime "${REGIME_ID}" \
+            --schema "${SCHEMA_ID}"
+
+          python -m src.report_weekly \
+            --week_end "${WEEK_END}" \
+            --regime "${REGIME_ID}" \
+            --schema "${SCHEMA_ID}"
+
+      # Always attempt to upload artifacts (even on failure)
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trader-sheet-and-report
+          path: |
+            week_end.txt
+            data/derived/trader_sheets/**
+            data/derived/reports/**
+            data/derived/baskets/**
+            data/live/scoreboard.csv
+            data/live/weeks_log.csv
+          if-no-files-found: warn
