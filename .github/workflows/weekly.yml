@@ -23,7 +23,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,11 +62,6 @@ jobs:
           head -5 sp500_universe.csv
           echo "..."
           tail -3 sp500_universe.csv
-      - name: Ingest market candles (required for scoring)
-        run: |
-          set -euo pipefail
-          python -m src.ingest_market_candles --universe sp500_universe.csv --week_end "${WEEK_END}"
-          test -f data/derived/market_daily/candles_daily.parquet || (echo "❌ candles_daily.parquet missing after ingest" && exit 1)
 
       - name: Determine week_end
         id: week_end
@@ -106,6 +100,21 @@ jobs:
           echo "WEEK_END=$WEEK_END" >> "$GITHUB_ENV"
           echo "✓ Week ending: $WEEK_END"
 
+      - name: Cache market candles
+        uses: actions/cache@v4
+        with:
+          path: data/derived/market_daily
+          key: market-daily-${{ runner.os }}-${{ env.WEEK_END }}
+          restore-keys: |
+            market-daily-${{ runner.os }}-
+
+      - name: Ingest market candles (required for scoring)
+        run: |
+          set -euo pipefail
+          : "${WEEK_END:?WEEK_END not set}"
+          python -m src.ingest_market_candles --universe sp500_universe.csv --week_end "${WEEK_END}"
+          test -f data/derived/market_daily/candles_daily.parquet || (echo "❌ candles_daily.parquet missing after ingest" && exit 1)
+
       - name: Preflight – resolved artifact paths (canonical + legacy hints)
         shell: bash
         env:
@@ -132,15 +141,10 @@ jobs:
           schema = os.environ["SCHEMA_ID"]
 
           paths = {
-              # Canonical target layout (what we want writer+reader to converge on)
               "features_canon": derived / "features_weekly" / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "features_weekly.parquet",
               "scores_canon":   derived / "scores_weekly"   / f"regime={regime}" / f"schema={schema}" / f"week_ending={week_end}" / "scores_weekly.parquet",
-
-              # Other required upstream artifacts
               "clusters":       derived / "news_clusters"   / f"week_ending={week_end}" / "clusters.parquet",
               "enriched":       derived / "rep_enriched"    / f"week_ending={week_end}" / "rep_enriched.parquet",
-
-              # Legacy hints (diagnostic only)
               "features_regime_only": derived / "features_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet",
               "features_flat":        derived / "features_weekly" / f"week_ending={week_end}" / "features_weekly.parquet",
               "scores_flat":          derived / "scores_weekly"   / f"week_ending={week_end}" / "scores_weekly.parquet",
@@ -184,18 +188,6 @@ jobs:
           test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
           echo "✓ Required secrets present"
 
-      # ----------------------------
-      # Pipeline execution
-      # Adjust module names if yours differ.
-      # ----------------------------
-      - name: Cache market candles
-        uses: actions/cache@v4
-        with:
-          path: data/derived/market_daily
-          key: market-daily-${{ runner.os }}-${{ env.WEEK_END }}
-          restore-keys: |
-            market-daily-${{ runner.os }}-
-
       - name: Run pipeline (ingest → cluster → enrich → score → report)
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -207,17 +199,8 @@ jobs:
           set -euo pipefail
           echo "Running pipeline for WEEK_END=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID}"
 
-          echo "=== CLI HELP (sanity) ==="
-          python -m src.cluster_news -h | head -50
-          python -m src.enrich_reps_openai -h | head -50
-          python -m src.features_scores -h | head -80
-          python -m src.report_weekly -h | head -80
-          echo "========================="
-
           python -m src.ingest_company_news --week_end "${WEEK_END}" --universe sp500_universe.csv
           python -m src.cluster_news --week_end "${WEEK_END}"
-
-          # If enrich_reps_openai does NOT accept --regime, remove it like cluster_news
           python -m src.enrich_reps_openai --week_end "${WEEK_END}"
 
           python -m src.features_scores \
@@ -231,7 +214,6 @@ jobs:
             --regime "${REGIME_ID}" \
             --schema "${SCHEMA_ID}"
 
-      # Always attempt to upload artifacts (even on failure)
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -245,3 +227,5 @@ jobs:
             data/live/scoreboard.csv
             data/live/weeks_log.csv
           if-no-files-found: warn
+
+
