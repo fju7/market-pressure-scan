@@ -1,42 +1,48 @@
 
 
+
 # Copilot Instructions for market-pressure-scan
 
-## Project Purpose & Architecture
+## Project Architecture & Purpose
 - Implements a weekly, news-driven market pressure signal (UPS/DPS) for live and backtest trading.
 - All experiment parameters are **locked** in `CONFIG.yaml` for the entire test period (8-12 weeks). **No tuning allowed.**
-- The workflow is modular and automated, with manual override scripts for debugging or stepwise control.
+- Modular, script-based workflow: each major step (ingest, cluster, enrich, score, log, report) is a separate script in `src/`.
+- Every automated step has a manual override script for debugging or stepwise control.
 
 ## Essential Workflows
-- **Weekly Pipeline:**
+- **Weekly pipeline:**
   - Main: `python -m src.run_weekly_pipeline --week_end YYYY-MM-DD --skip_backtest`
   - Orchestrated: `src/weekly_workflow.py` automates the full Friday→Monday→Friday cycle (see `LIVE_WORKFLOW.md`).
-- **Live Trading Routine:**
+- **Live trading routine:**
   - One-time setup: `python -m src.init_live_ledger`
   - Weekly: `python -m src.weekly_workflow --week_end YYYY-MM-DD --mode friday|monday|friday_close`
   - Manual alternatives: `src/log_week_decision.py`, `src/log_trades.py`, `src/update_weekly_pnl.py`
-- **Performance Analysis:**
+- **Performance analysis:**
   - Quick: `python -m src.scoreboard`
   - Full: `python -m src.analyze_performance`
+- **CI/CD:**
+  - The `.github/workflows/weekly.yml` workflow automates the full pipeline, artifact upload, and notification issue creation.
 
 ## Data Flow & Structure
 - **Input:**
   - News: `src/ingest_company_news.py` (Finnhub API, requires `FINNHUB_API_KEY`)
   - Market candles: `src/ingest_market_candles.py`
-  - Main pipeline outputs: `data/derived/reports/`, `data/derived/baskets/`
+- **Main pipeline outputs:**
+  - Reports: `data/derived/reports/`
+  - Baskets: `data/derived/baskets/`
 - **Ledgers:**
-  - Trades, P&L, and week decisions: `data/live/`
+  - Trades, P&L, week decisions: `data/live/`
   - Scoreboard and reports: `data/derived/`
 - **Artifacts:**
-  - All logs are CSV or Markdown. See `LIVE_WORKFLOW.md` for file conventions.
+  - All logs and reports are CSV or Markdown. See `LIVE_WORKFLOW.md` for file conventions.
+  - Artifacts are uploaded by the CI workflow and linked in notification issues.
 
 ## Project Conventions & Patterns
 - **No tuning:** Never change `CONFIG.yaml` during a test. All changes = new experiment.
 - **Skip logic:** Automated skip-week logic is central. Do not override unless manually testing/debugging.
 - **Canonical paths:** Use helper functions in `src/derived_paths.py` for artifact locations.
-- **Consistent routines:** All major steps (ingest, cluster, enrich, score, log, report) are separate scripts in `src/`.
-- **Manual override:** Every automated step has a manual script for granular control.
 - **Config snapshotting:** Each report logs the config used for reproducibility (see `report_meta.json`).
+- **Schemas & regimes:** Scoring schemas are in `configs/scoring_schemas/`, regime configs in `config/regimes/`.
 
 ## Integration Points
 - **Finnhub API:** Set `FINNHUB_API_KEY` in env for news/price ingestion.
@@ -61,6 +67,9 @@
 - `README.md`, `LIVE_WORKFLOW.md`, `EXPERIMENT_PROTOCOL.md`, `CONFIG.yaml`
 - Main scripts: `src/weekly_workflow.py`, `src/run_weekly_pipeline.py`, `src/scoreboard.py`, `src/analyze_performance.py`
 - Data: `data/live/`, `data/derived/`
+- Scoring schemas: `configs/scoring_schemas/`
+- Regime configs: `config/regimes/`
+- CI workflow: `.github/workflows/weekly.yml`
 
 ---
 
