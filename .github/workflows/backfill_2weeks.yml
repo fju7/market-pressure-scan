@@ -100,8 +100,6 @@ jobs:
             --universe "${{ inputs.universe }}" \
             --regime "${{ inputs.regime }}" \
             --schema "${{ inputs.schema }}" \
-            --skip_backtest \
-            --stop_after_scores \
             --from_stage "${{ inputs.from_stage }}" \
             ${FORCE_FLAG}
 
