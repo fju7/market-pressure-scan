@@ -38,7 +38,6 @@ on:
         type: boolean
 
 concurrency:
-  # Prevent multiple backfills stepping on each other’s derived files in the same branch.
   group: backfill-${{ github.ref }}
   cancel-in-progress: false
 
@@ -46,11 +45,6 @@ jobs:
   backfill:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-
-    strategy:
-      fail-fast: false
-      matrix:
-        week_end: ["${{ inputs.week_end_1 }}", "${{ inputs.week_end_2 }}"]
 
     steps:
       - name: Checkout
@@ -66,13 +60,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run weekly pipeline to scores (no backtest)
+      - name: Run weekly pipeline (week_end_1)
         env:
           PYTHONUNBUFFERED: "1"
         run: |
-          echo "Running week_end=${{ matrix.week_end }}"
+          set -euxo pipefail
+          WEEK="${{ inputs.week_end_1 }}"
+          echo "=== Running week_end=${WEEK} ==="
           python -m src.run_weekly_pipeline \
-            --week_end "${{ matrix.week_end }}" \
+            --week_end "${WEEK}" \
             --universe "${{ inputs.universe }}" \
             --regime "${{ inputs.regime }}" \
             --schema "${{ inputs.schema }}" \
@@ -81,27 +77,44 @@ jobs:
             --from_stage "${{ inputs.from_stage }}" \
             ${{ inputs.force && '--force' || '' }}
 
-      - name: Verify rep_enriched exists
-        run: |
-          ls -lah "data/derived/rep_enriched/week_ending=${{ matrix.week_end }}/rep_enriched.parquet"
+          echo "=== Verify expected artifacts exist for ${WEEK} ==="
+          test -f "data/derived/rep_enriched/week_ending=${WEEK}/rep_enriched.parquet"
+          test -f "data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/features_weekly.parquet"
+          test -f "data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/scores_weekly.parquet"
 
-      - name: Upload derived artifacts for this week
+      - name: Run weekly pipeline (week_end_2)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euxo pipefail
+          WEEK="${{ inputs.week_end_2 }}"
+          echo "=== Running week_end=${WEEK} ==="
+          python -m src.run_weekly_pipeline \
+            --week_end "${WEEK}" \
+            --universe "${{ inputs.universe }}" \
+            --regime "${{ inputs.regime }}" \
+            --schema "${{ inputs.schema }}" \
+            --skip_backtest \
+            --stop_after_scores \
+            --from_stage "${{ inputs.from_stage }}" \
+            ${{ inputs.force && '--force' || '' }}
+
+          echo "=== Verify expected artifacts exist for ${WEEK} ==="
+          test -f "data/derived/rep_enriched/week_ending=${WEEK}/rep_enriched.parquet"
+          test -f "data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/features_weekly.parquet"
+          test -f "data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/scores_weekly.parquet"
+
+      - name: Upload derived artifacts (both weeks)
         uses: actions/upload-artifact@v4
         with:
-          name: derived-week-${{ matrix.week_end }}
-          path: |
-            data/derived/rep_enriched/week_ending=${{ matrix.week_end }}/
-            data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
-            data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
+          name: derived-backfill-${{ inputs.week_end_1 }}-${{ inputs.week_end_2 }}
           if-no-files-found: error
+          path: |
+            data/derived/rep_enriched/week_ending=${{ inputs.week_end_1 }}/
+            data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
+            data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
 
-        - name: Commit derived artifacts back to repo
-          if: github.ref_name == 'main'
-          run: |
-            git config user.name "github-actions"
-            git config user.email "github-actions@github.com"
-            git add data/derived/rep_enriched/week_ending=${{ matrix.week_end }}/
-            git add data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
-            git add data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
-            git commit -m "Backfill derived artifacts for week_end=${{ matrix.week_end }}" || echo "No changes to commit"
-            git push
+            data/derived/rep_enriched/week_ending=${{ inputs.week_end_2 }}/
+            data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
+            data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
+
