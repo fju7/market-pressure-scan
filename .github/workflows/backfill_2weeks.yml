@@ -64,7 +64,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Preflight: require API keys
+      - name: Preflight require API keys
         shell: bash
         run: |
           set -euo pipefail
