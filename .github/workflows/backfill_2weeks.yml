@@ -1,0 +1,107 @@
+name: Backfill (2 weeks)
+
+on:
+  workflow_dispatch:
+    inputs:
+      week_end_1:
+        description: "First week ending date (YYYY-MM-DD)"
+        required: true
+        type: string
+      week_end_2:
+        description: "Second week ending date (YYYY-MM-DD)"
+        required: true
+        type: string
+      regime:
+        description: "Regime ID"
+        required: true
+        default: "news-novelty-v1"
+        type: string
+      schema:
+        description: "Schema ID"
+        required: true
+        default: "news-novelty-v1b"
+        type: string
+      universe:
+        description: "Universe CSV path"
+        required: true
+        default: "sp500_universe.csv"
+        type: string
+      from_stage:
+        description: "Start from stage (candles|news|cluster|enrich|score|report|basket|trader|log)"
+        required: true
+        default: "candles"
+        type: string
+      force:
+        description: "Force rebuild artifacts"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  # Prevent multiple backfills stepping on each other’s derived files in the same branch.
+  group: backfill-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        week_end: ["${{ inputs.week_end_1 }}", "${{ inputs.week_end_2 }}"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run weekly pipeline to scores (no backtest)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "Running week_end=${{ matrix.week_end }}"
+          python -m src.run_weekly_pipeline \
+            --week_end "${{ matrix.week_end }}" \
+            --universe "${{ inputs.universe }}" \
+            --regime "${{ inputs.regime }}" \
+            --schema "${{ inputs.schema }}" \
+            --skip_backtest \
+            --stop_after_scores \
+            --from_stage "${{ inputs.from_stage }}" \
+            ${{ inputs.force && '--force' || '' }}
+
+      - name: Verify rep_enriched exists
+        run: |
+          ls -lah "data/derived/rep_enriched/week_ending=${{ matrix.week_end }}/rep_enriched.parquet"
+
+      - name: Upload derived artifacts for this week
+        uses: actions/upload-artifact@v4
+        with:
+          name: derived-week-${{ matrix.week_end }}
+          path: |
+            data/derived/rep_enriched/week_ending=${{ matrix.week_end }}/
+            data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
+            data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
+          if-no-files-found: error
+
+        - name: Commit derived artifacts back to repo
+          if: github.ref_name == 'main'
+          run: |
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git add data/derived/rep_enriched/week_ending=${{ matrix.week_end }}/
+            git add data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
+            git add data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ matrix.week_end }}/
+            git commit -m "Backfill derived artifacts for week_end=${{ matrix.week_end }}" || echo "No changes to commit"
+            git push
