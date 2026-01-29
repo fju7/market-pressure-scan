@@ -122,7 +122,6 @@ jobs:
             data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
             data/derived/reports/week_ending=${{ inputs.week_end_1 }}/
 
-
       - name: Run weekly pipeline (week_end_2)
         shell: bash
         run: |
