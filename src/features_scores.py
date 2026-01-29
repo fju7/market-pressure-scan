@@ -378,20 +378,27 @@ def build_news_feature_panel(
 
     # current counts per symbol (dedup clusters)
     cur_counts = (
-        df_cur.groupby("symbol", as_index=False)
-        .agg(
-            count_5d_dedup=("cluster_id", "nunique"),
-            EC_raw=("cluster_size", "mean"),
-            unique_sources_mean=("unique_sources", "mean"),
-        )
-    )
+    df_cur.groupby("symbol", as_index=False)
+    .agg(
+        # "dedup clusters" = unique clusters, not sum of cluster sizes
+        count_5d_dedup=("cluster_id", "nunique"),
 
-    # historical weekly counts (dedup clusters)
+        # keep EC_raw as "average cluster size" (even if placeholder right now)
+        EC_raw=("cluster_size", "mean"),
+        unique_sources_mean=("unique_sources", "mean"),
+    )
+)
+    # optional extra diagnostics (helpful while debugging)
+    rep_rows_5d=("cluster_id", "size"),
+    
     hist_by_week = (
         df_hist.groupby(["week_ending_date", "symbol"], as_index=False)
-        .agg(count_week=("cluster_id", "nunique"))
-        .sort_values(["symbol", "week_ending_date"])
+        .agg(
+            # weekly dedup clusters = unique cluster_ids that week
+            count_week=("cluster_id", "nunique")
     )
+        .sort_values(["symbol", "week_ending_date"])
+)
 
     def add_roll(g: pd.DataFrame) -> pd.DataFrame:
         g = g.sort_values("week_ending_date")
@@ -413,8 +420,12 @@ def build_news_feature_panel(
     cur["count_60d_dedup"] = pd.to_numeric(cur["count_60d_dedup"], errors="coerce").fillna(0.0)
 
     # novelty proxies
-    cur["NV_raw"] = np.log1p(cur["count_5d_dedup"]) - np.log1p(cur["count_60d_dedup"] / 12.0 + 1e-12)
-    cur["NA_raw"] = np.log1p(cur["count_5d_dedup"]) - np.log1p(cur["count_20d_dedup"] / 4.0 + 1e-12)
+    # Novelty proxy: compare recent vs baseline *rates* (prevents degeneracy when counts are small/quantized)
+    recent_rate = (cur["count_5d_dedup"] / 5.0).astype(float)
+    baseline_rate = (cur["count_60d_dedup"] / 60.0).astype(float)
+    cur["NV_raw"] = np.log1p((recent_rate + 1e-6) / (baseline_rate + 1e-6))
+    cur["NA_raw"] = np.log1p((recent_rate + 1e-6) / ((cur["count_20d_dedup"] / 20.0).astype(float) + 1e-6))
+
 
     # sentiment signal: current week mean minus history mean
     sent_cur = df_cur.groupby("symbol", as_index=False).agg(sent_5d=("sent_score_final", "mean"))
@@ -561,6 +572,10 @@ def compute_scores(
     features_cols = [
         "symbol",
         "week_ending_date",
+        "count_5d_dedup",
+        "count_20d_dedup",
+        "count_60d_dedup",
+        "unique_sources_mean",
         "NV_raw",
         "NA_raw",
         "NS_raw",

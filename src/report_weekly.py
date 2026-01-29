@@ -198,21 +198,54 @@ def conviction_band(ups_adj: float) -> str:
 
 
 def ranking_rationale(row: pd.Series) -> str:
-    mcs = float(row.get("MCS_up", np.nan))
-    ifs = float(row.get("IFS", np.nan))
-    evs = float(row.get("EVS", np.nan))
-    pd_up = float(row.get("PD_up_raw", np.nan))
-    ar5 = float(row.get("AR5", np.nan))
+    """
+    Explain rank using factor contribution columns that are present in the merged df:
+      - novelty_factor
+      - event_intensity_factor
+      - sentiment_factor
+      - divergence_factor
 
-    if np.isfinite(mcs) and mcs >= 0.60 and (not np.isfinite(ifs) or ifs < 0.35):
-        return "Ranked primarily due to recent price confirmation rather than new information."
-    if np.isfinite(ifs) and np.isfinite(evs) and (ifs + evs) >= 0.80 and (not np.isfinite(mcs) or mcs < 0.45):
-        return "Ranked due to information-driven news flow with limited price confirmation so far."
-    if np.isfinite(pd_up) and pd_up >= 0.75:
-        if np.isfinite(ar5) and ar5 < 0:
-            return "Ranked due to strong divergence: constructive news signals while recent price action remains weak."
-        return "Ranked due to divergence between news signals and recent price action."
-    return "Rank reflects a mix of weaker signals with no clear dominant driver."
+    Falls back gracefully if any are missing.
+    """
+    factors = {
+        "Novelty": float(row.get("novelty_factor", np.nan)),
+        "Event intensity": float(row.get("event_intensity_factor", np.nan)),
+        "Sentiment shift": float(row.get("sentiment_factor", np.nan)),
+        "News/price divergence": float(row.get("divergence_factor", np.nan)),
+    }
+
+    # keep only finite values
+    finite = {k: v for k, v in factors.items() if np.isfinite(v)}
+
+    if not finite:
+        return "Insufficient factor data to explain rank."
+
+    # dominant = largest absolute contribution
+    dom_name, dom_val = max(finite.items(), key=lambda kv: abs(kv[1]))
+
+    # Provide a directional word based on sign
+    direction = "positive" if dom_val >= 0 else "negative"
+
+    # Add a little context from z-scores when available
+    z_nv = row.get("z_NV_raw", np.nan)
+    z_ei = row.get("z_EI_raw", np.nan)
+    z_ss = row.get("z_SS_raw", np.nan)
+    z_ar5 = row.get("z_AR5", np.nan)
+
+    bits = []
+    if np.isfinite(z_nv):
+        bits.append(f"novelty z={fmt_num(float(z_nv), 2)}")
+    if np.isfinite(z_ei):
+        bits.append(f"event z={fmt_num(float(z_ei), 2)}")
+    if np.isfinite(z_ss):
+        bits.append(f"sentiment z={fmt_num(float(z_ss), 2)}")
+    if np.isfinite(z_ar5):
+        bits.append(f"AR5 z={fmt_num(float(z_ar5), 2)}")
+
+    detail = (", ".join(bits)) if bits else "z-scores unavailable"
+
+    return f"Driven primarily by **{dom_name}** ({direction}) with {detail}."
+
 
 
 # ----------------------------
@@ -252,8 +285,20 @@ def build_report_markdown(
         )
         recap_pct = float(100.0 * (event_types == "PRICE_ACTION_RECAP").mean())
 
-    avg_novelty = float(np.nanmean(df["NS"])) if "NS" in df.columns else np.nan
-    avg_evs = float(np.nanmean(df["EVS"])) if "EVS" in df.columns else np.nan
+        # Prefer z-scored columns (these are what our pipeline currently writes)
+    if "z_NV_raw" in df.columns:
+        avg_novelty = float(np.nanmean(df["z_NV_raw"]))
+    elif "NS" in df.columns:
+        avg_novelty = float(np.nanmean(df["NS"]))
+    else:
+        avg_novelty = np.nan
+
+    if "z_EI_raw" in df.columns:
+        avg_evs = float(np.nanmean(df["z_EI_raw"]))
+    elif "EVS" in df.columns:
+        avg_evs = float(np.nanmean(df["EVS"]))
+    else:
+        avg_evs = np.nan
 
     low_info_reasons = []
     if recap_pct >= 70:
@@ -293,15 +338,34 @@ def build_report_markdown(
     sector_col = "sector" if "sector" in top.columns else None
     lines.append(f"## Top {len(top)} Upside Pressure (UPS)")
     lines.append("")
-    lines.append("| Rank | Ticker | Sector | UPS_adj | Conviction | Rationale |")
-    lines.append("|---:|:---|:---|---:|:---|:---|")
+    lines.append("| Rank | Ticker | Sector | UPS_adj | z_NV | z_EI | z_SS | z_AR5 | Dominant driver | Conviction | Rationale |")
+    lines.append("|---:|:---|:---|---:|---:|---:|---:|---:|:---|:---|:---|")
+
     for i, (_, r) in enumerate(top.iterrows(), start=1):
         sym = str(r.get("symbol", ""))
         sec = str(r.get(sector_col, "Unknown")) if sector_col else "Unknown"
         ups_val = float(r.get("UPS_adj", np.nan))
+        z_nv = float(r.get("z_NV_raw", np.nan))
+        z_ei = float(r.get("z_EI_raw", np.nan))
+        z_ss = float(r.get("z_SS_raw", np.nan))
+        z_ar5 = float(r.get("z_AR5", np.nan))
+
+        # Dominant driver from factor contributions
+        contribs = {
+            "Novelty": float(r.get("novelty_factor", np.nan)),
+            "Event intensity": float(r.get("event_intensity_factor", np.nan)),
+            "Sentiment shift": float(r.get("sentiment_factor", np.nan)),
+            "News/price divergence": float(r.get("divergence_factor", np.nan)),
+        }
+        finite = {k: v for k, v in contribs.items() if np.isfinite(v)}
+        dom = max(finite.items(), key=lambda kv: abs(kv[1]))[0] if finite else "—"
+
         lines.append(
-            f"| {i} | {sym} | {sec} | {fmt_num(ups_val, 3)} | {conviction_band(ups_val)} | {ranking_rationale(r)} |"
+            f"| {i} | {sym} | {sec} | {fmt_num(ups_val, 3)} | "
+            f"{fmt_num(z_nv, 2)} | {fmt_num(z_ei, 2)} | {fmt_num(z_ss, 2)} | {fmt_num(z_ar5, 2)} | "
+            f"{dom} | {conviction_band(ups_val)} | {ranking_rationale(r)} |"
         )
+
     lines.append("")
 
     # Bottom table (light)

@@ -64,9 +64,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Preflight: require API keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${FINNHUB_API_KEY:-}" ]] || (echo "Missing FINNHUB_API_KEY secret" && exit 1)
+          [[ -n "${OPENAI_API_KEY:-}" ]] || (echo "Missing OPENAI_API_KEY secret" && exit 1)
+          echo "✅ API keys present"
+
       - name: Run weekly pipeline (week_end_1)
-        env:
-          PYTHONUNBUFFERED: "1"
         shell: bash
         run: |
           set -euxo pipefail
@@ -98,10 +104,21 @@ jobs:
           test -f "data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/features_weekly.parquet"
           test -f "data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/scores_weekly.parquet"
 
+      - name: Upload derived artifacts (week_end_1)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: derived-${{ inputs.week_end_1 }}
+          if-no-files-found: warn
+          path: |
+            data/derived/rep_enriched/week_ending=${{ inputs.week_end_1 }}/
+            data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
+            data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
+            data/derived/reports/week_ending=${{ inputs.week_end_1 }}/
+
 
       - name: Run weekly pipeline (week_end_2)
-        env:
-          PYTHONUNBUFFERED: "1"
+      
         shell: bash
         run: |
           set -euxo pipefail
@@ -132,6 +149,18 @@ jobs:
           test -f "data/derived/rep_enriched/week_ending=${WEEK}/rep_enriched.parquet"
           test -f "data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/features_weekly.parquet"
           test -f "data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/scores_weekly.parquet"
+
+      - name: Upload derived artifacts (week_end_2)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: derived-${{ inputs.week_end_2 }}
+          if-no-files-found: warn
+          path: |
+            data/derived/rep_enriched/week_ending=${{ inputs.week_end_2 }}/
+            data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
+            data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
+            data/derived/reports/week_ending=${{ inputs.week_end_2 }}/
 
 
       - name: Upload derived artifacts (both weeks)
