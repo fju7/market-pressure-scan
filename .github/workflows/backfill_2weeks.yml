@@ -63,10 +63,22 @@ jobs:
       - name: Run weekly pipeline (week_end_1)
         env:
           PYTHONUNBUFFERED: "1"
+        shell: bash
         run: |
           set -euxo pipefail
           WEEK="${{ inputs.week_end_1 }}"
           echo "=== Running week_end=${WEEK} ==="
+
+          # ✅ satisfy week_end mismatch guard
+          echo "${WEEK}" > week_end.txt
+          echo "week_end.txt now:"
+          cat week_end.txt
+
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+
           python -m src.run_weekly_pipeline \
             --week_end "${WEEK}" \
             --universe "${{ inputs.universe }}" \
@@ -75,20 +87,33 @@ jobs:
             --skip_backtest \
             --stop_after_scores \
             --from_stage "${{ inputs.from_stage }}" \
-            ${{ inputs.force && '--force' || '' }}
+            ${FORCE_FLAG}
 
           echo "=== Verify expected artifacts exist for ${WEEK} ==="
           test -f "data/derived/rep_enriched/week_ending=${WEEK}/rep_enriched.parquet"
           test -f "data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/features_weekly.parquet"
           test -f "data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/scores_weekly.parquet"
+
 
       - name: Run weekly pipeline (week_end_2)
         env:
           PYTHONUNBUFFERED: "1"
+        shell: bash
         run: |
           set -euxo pipefail
           WEEK="${{ inputs.week_end_2 }}"
           echo "=== Running week_end=${WEEK} ==="
+
+          # ✅ satisfy week_end mismatch guard
+          echo "${WEEK}" > week_end.txt
+          echo "week_end.txt now:"
+          cat week_end.txt
+
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+
           python -m src.run_weekly_pipeline \
             --week_end "${WEEK}" \
             --universe "${{ inputs.universe }}" \
@@ -97,12 +122,13 @@ jobs:
             --skip_backtest \
             --stop_after_scores \
             --from_stage "${{ inputs.from_stage }}" \
-            ${{ inputs.force && '--force' || '' }}
+            ${FORCE_FLAG}
 
           echo "=== Verify expected artifacts exist for ${WEEK} ==="
           test -f "data/derived/rep_enriched/week_ending=${WEEK}/rep_enriched.parquet"
           test -f "data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/features_weekly.parquet"
           test -f "data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${WEEK}/scores_weekly.parquet"
+
 
       - name: Upload derived artifacts (both weeks)
         uses: actions/upload-artifact@v4
