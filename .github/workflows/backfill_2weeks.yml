@@ -45,6 +45,9 @@ jobs:
   backfill:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - name: Checkout
