@@ -68,8 +68,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${FINNHUB_API_KEY:-}" ]] || (echo "Missing FINNHUB_API_KEY secret" && exit 1)
-          [[ -n "${OPENAI_API_KEY:-}" ]] || (echo "Missing OPENAI_API_KEY secret" && exit 1)
+          if [ -z "${FINNHUB_API_KEY:-}" ]; then
+            echo "Missing FINNHUB_API_KEY secret"
+            exit 1
+          fi
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "Missing OPENAI_API_KEY secret"
+            exit 1
+          fi
           echo "✅ API keys present"
 
       - name: Run weekly pipeline (week_end_1)
@@ -118,7 +124,6 @@ jobs:
 
 
       - name: Run weekly pipeline (week_end_2)
-      
         shell: bash
         run: |
           set -euxo pipefail
