@@ -81,9 +81,15 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
         return out_csv
 
     # Load scores output (try schema-specific path first, then regime-only, then legacy)
-        scores_path_schema = Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
-        scores_path_regime = Path(f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet")
-    scores_path_legacy = Path(f"data/derived/scores_weekly/week_ending={week_end}/scores_weekly.parquet")
+    scores_path_schema = Path(
+        f"data/derived/scores_weekly/regime={regime}/schema={schema}/week_ending={week_end}/scores_weekly.parquet"
+    )
+    scores_path_regime = Path(
+        f"data/derived/scores_weekly/regime={regime}/week_ending={week_end}/scores_weekly.parquet"
+    )
+    scores_path_legacy = Path(
+        f"data/derived/scores_weekly/week_ending={week_end}/scores_weekly.parquet"
+    )
 
     if scores_path_schema.exists():
         scores_path = scores_path_schema
@@ -98,8 +104,11 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
         )
 
     df = pd.read_parquet(scores_path).copy()
-    if "symbol" not in df.columns or "UPS_adj" not in df.columns:
-        raise RuntimeError("Scores file must include at least: symbol, UPS_adj")
+
+    # Backward-compatible score column selection
+    score_col = "UPS_adj" if "UPS_adj" in df.columns else ("score" if "score" in df.columns else None)
+    if "symbol" not in df.columns or score_col is None:
+        raise RuntimeError("Scores file must include at least: symbol and either UPS_adj or score")
 
     # Exclude SPY/ETFs if they slip through
     df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
@@ -108,7 +117,7 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
         df = df[df["sector"].astype(str).str.upper().str.strip() != "ETF"].copy()
 
     # Top N by UPS_adj (descending)
-    df = df.sort_values("UPS_adj", ascending=False).head(top_n).copy()
+    df = df.sort_values(score_col, ascending=False).head(top_n).copy()
 
     if equal_weight:
         df["weight"] = 1.0 / len(df) if len(df) else 0.0
@@ -119,14 +128,14 @@ def run(week_end: str, top_n: int, skip_low_info: bool, regime: str = "news-nove
     # Add reason codes for attribution analysis
     df["drivers"] = df.apply(compute_drivers, axis=1)
     df["signal_state"] = df.apply(compute_signal_state, axis=1)
-    df["conviction"] = df["UPS_adj"].apply(compute_conviction)
+    df["conviction"] = df[score_col].apply(compute_conviction)
 
     out = pd.DataFrame({
         "week_ending_date": week_end,
         "action": "TRADE",
         "symbol": df["symbol"],
         "sector": df["sector"] if "sector" in df.columns else "",
-        "UPS_adj": df["UPS_adj"],
+        "UPS_adj": df[score_col],
         "conviction": df["conviction"],
         "drivers": df["drivers"],
         "signal_state": df["signal_state"],
