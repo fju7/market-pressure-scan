@@ -113,7 +113,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/derived/market_daily
-          key: market-daily-${{ runner.os }}-v1          restore-keys: |
+          key: market-daily-${{ runner.os }}-v1
           
       - name: Ingest market candles (required for scoring)
         run: |
