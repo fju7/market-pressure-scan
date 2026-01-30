@@ -119,6 +119,18 @@ jobs:
             data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
             data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
             data/derived/reports/week_ending=${{ inputs.week_end_1 }}/
+            
+      - name: Clean derived artifacts for week_end_2
+        shell: bash
+        run: |
+          set -euxo pipefail
+          WEEK="${{ inputs.week_end_2 }}"
+          echo "🧹 Cleaning derived artifacts for ${WEEK}"
+          rm -rf \
+            data/derived/rep_enriched/week_ending=${WEEK} \
+            data/derived/news_clusters/week_ending=${WEEK} \
+            data/derived/features_weekly/**/week_ending=${WEEK} \
+            data/derived/scores_weekly/**/week_ending=${WEEK}
 
       - name: Run weekly pipeline (week_end_2)
         shell: bash
