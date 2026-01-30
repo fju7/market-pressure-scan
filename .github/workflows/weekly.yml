@@ -34,8 +34,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
+          python-version: "3.12" 
       - name: Install deps
         run: |
           set -euo pipefail
@@ -192,7 +191,7 @@ jobs:
           test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
           echo "✓ Required secrets present"
 
-      - name: Run pipeline (ingest → cluster → enrich → score → report)
+      - name: Run weekly pipeline (canonical orchestrator_ 
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -200,23 +199,19 @@ jobs:
           REGIME_ID: news-novelty-v1
           SCHEMA_ID: news-novelty-v1b
         run: |
-          set -euo pipefail
-          echo "Running pipeline for WEEK_END=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID}"
+          set -euxo pipefail          echo "=== Running week_end=${WEEK_END} ==="pipeline for WEEK_END=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID}"
 
-          python -m src.ingest_company_news --week_end "${WEEK_END}" --universe sp500_universe.csv
-          python -m src.cluster_news --week_end "${WEEK_END}"
-          python -m src.enrich_reps_openai --week_end "${WEEK_END}"
+         # satisfy week_end mismatch guard (same pattern as backfill)
+          echo "${WEEK_END}" > week_end.txt
+          cat week_end.txt
 
-          python -m src.features_scores \
+          python -m src.run_weekly_pipeline \
+            --week_end "${WEEK_END}"
             --universe sp500_universe.csv \
             --week_end "${WEEK_END}" \
             --regime "${REGIME_ID}" \
             --schema "${SCHEMA_ID}"
-
-          python -m src.report_weekly \
-            --week_end "${WEEK_END}" \
-            --regime "${REGIME_ID}" \
-            --schema "${SCHEMA_ID}"
+            --from_stage "candles"
 
       - name: Upload artifacts
         if: always()
@@ -228,8 +223,49 @@ jobs:
             data/derived/trader_sheets/**
             data/derived/reports/**
             data/derived/baskets/**
+            data/derived/analysis/hypothesis_eval/**
             data/live/scoreboard.csv
             data/live/weeks_log.csv
           if-no-files-found: warn
+    evaluate-hypothesis:
+      needs: run-pipeline
+      runs-on: ubuntu-latest
+      env:
+        WEEK_END: ${{ needs.run-pipeline.outputs.week_end }}
+        REGIME_ID: news-novelty-v1
+        SCHEMA_ID: news-novelty-v1b
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+        - name: Setup Python
+          uses: actions/setup-python@v5
+          with:
+            python-version: "3.12"
+        - name: Install deps
+          run: |
+            set -euo pipefail
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+        - name: Evaluate hypothesis (artifact-only)
+          env:
+            WEEK_END: ${{ env.WEEK_END }}
+            REGIME_ID: ${{ env.REGIME_ID }}
+            SCHEMA_ID: ${{ env.SCHEMA_ID }}
+          run: |
+            set -euo pipefail
+            python -m src.evaluate_hypothesis \
+              --schema "${SCHEMA_ID}" \
+              --regime "${REGIME_ID}" \
+              --weeks "${WEEK_END}" \
+              --top_n 10 \
+              --bottom_n 10 \
+              --horizons 5,10,20
+          - name: Verify evaluation artifacts exist
+            env:
+              WEEK_END: ${{ env.WEEK_END }}
+            run: |
+              set -euo pipefail
+              test -f "data/derived/analysis/hypothesis_eval/week_ending=${WEEK_END}/evaluation.md"
+              test -f "data/derived/analysis/hypothesis_eval/summary.csv"
 
 
