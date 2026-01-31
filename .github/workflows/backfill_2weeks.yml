@@ -92,7 +92,7 @@ jobs:
 
           FORCE_FLAG=""
           if [[ "${{ inputs.force }}" == "true" ]]; then
-          FORCE_FLAG="--force"
+            FORCE_FLAG="--force"
           fi
 
           python -m src.run_weekly_pipeline \
@@ -147,6 +147,8 @@ jobs:
           echo "${WEEK}" > week_end.txt
           echo "week_end.txt now:"
           cat week_end.txt
+          
+          test "$(cat week_end.txt)" = "${WEEK}"
 
           FORCE_FLAG=""
           if [[ "${{ inputs.force }}" == "true" ]]; then
