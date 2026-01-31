@@ -84,15 +84,15 @@ jobs:
           set -euxo pipefail
           WEEK="${{ inputs.week_end_1 }}"
           echo "=== Running week_end=${WEEK} ==="
-
-          # ✅ satisfy week_end mismatch guard
           echo "${WEEK}" > week_end.txt
           echo "week_end.txt now:"
           cat week_end.txt
 
+          test "$(cat week_end.txt)" = "${WEEK}"
+
           FORCE_FLAG=""
           if [[ "${{ inputs.force }}" == "true" ]]; then
-            FORCE_FLAG="--force"
+          FORCE_FLAG="--force"
           fi
 
           python -m src.run_weekly_pipeline \
@@ -127,10 +127,14 @@ jobs:
           WEEK="${{ inputs.week_end_2 }}"
           echo "🧹 Cleaning derived artifacts for ${WEEK}"
           rm -rf \
-            data/derived/rep_enriched/week_ending=${WEEK} \
+            data/derived/company_news/week_ending=${WEEK} \
             data/derived/news_clusters/week_ending=${WEEK} \
+            data/derived/rep_enriched/week_ending=${WEEK} \
             data/derived/features_weekly/**/week_ending=${WEEK} \
-            data/derived/scores_weekly/**/week_ending=${WEEK}
+            data/derived/scores_weekly/**/week_ending=${WEEK} \
+            data/derived/reports/week_ending=${WEEK} \
+            data/derived/baskets/week_ending=${WEEK} \
+            data/derived/trader_sheets/week_ending=${WEEK}
 
       - name: Run weekly pipeline (week_end_2)
         shell: bash
