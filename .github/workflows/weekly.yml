@@ -251,6 +251,15 @@ jobs:
           name: trader-sheet-and-report
           path: |
             week_end.txt
+
+            # Forensics (keep per-week raw-ish artifacts)
+            data/derived/company_news/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/news_clusters/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/rep_enriched/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/features_weekly/**/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/scores_weekly/**/week_ending=${{ steps.week_end.outputs.week_end }}/**
+
+            # Outputs / reporting
             data/derived/trader_sheets/**
             data/derived/reports/**
             data/derived/baskets/**
