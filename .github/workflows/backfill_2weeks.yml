@@ -160,7 +160,7 @@ jobs:
             --universe "${{ inputs.universe }}" \
             --regime "${{ inputs.regime }}" \
             --schema "${{ inputs.schema }}" \
-            --from_stage "${{ inputs.from_stage }}" \
+            --from_stage "news"
             ${FORCE_FLAG}
 
           echo "=== Verify expected artifacts exist for ${WEEK} ==="
