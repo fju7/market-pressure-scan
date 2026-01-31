@@ -127,8 +127,6 @@ jobs:
           WEEK="${{ inputs.week_end_2 }}"
           echo "🧹 Cleaning derived artifacts for ${WEEK}"
           rm -rf \
-            data/derived/company_news/week_ending=${WEEK} \
-            data/derived/news_clusters/week_ending=${WEEK} \
             data/derived/rep_enriched/week_ending=${WEEK} \
             data/derived/features_weekly/**/week_ending=${WEEK} \
             data/derived/scores_weekly/**/week_ending=${WEEK} \
