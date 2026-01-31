@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import argparse
 import hashlib
 import json
@@ -9,10 +10,13 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from requests.exceptions import RequestException
+
 
 import pandas as pd
 import requests
+import numpy as np
 from tqdm import tqdm
 
 from .io_atomic import write_parquet_atomic
@@ -33,11 +37,52 @@ class OpenAIHTTP:
         }
 
     def post(self, path: str, payload: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
-        r = requests.post(f"{OPENAI_BASE}{path}", headers=self.headers, data=json.dumps(payload), timeout=timeout)
-        if r.status_code >= 400:
-            # Show the exact OpenAI error payload to debug schema/model issues
-            raise RuntimeError(f"OpenAI HTTP {r.status_code}: {r.text}")
-        return r.json()
+        """
+        Robust POST with retry/backoff for transient network failures and 5xx/429.
+        """
+        url = f"{OPENAI_BASE}{path}"
+        last_err: Optional[Exception] = None
+
+        # Tune these without changing call sites
+        max_attempts = int(os.environ.get("OPENAI_HTTP_MAX_ATTEMPTS", "6"))
+        base_sleep = float(os.environ.get("OPENAI_HTTP_BASE_SLEEP_S", "1.0"))
+        max_sleep = float(os.environ.get("OPENAI_HTTP_MAX_SLEEP_S", "20.0"))
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                r = requests.post(
+                    url,
+                    headers=self.headers,
+                    data=json.dumps(payload),
+                    timeout=timeout,
+                )
+
+                # Retry on rate limits / transient server errors
+                if r.status_code in (429, 500, 502, 503, 504):
+                    # Respect Retry-After if provided, otherwise exponential backoff
+                    retry_after = r.headers.get("Retry-After")
+                    if retry_after:
+                        sleep_s = min(float(retry_after), max_sleep)
+                    else:
+                        sleep_s = min(base_sleep * (2 ** (attempt - 1)), max_sleep)
+                    time.sleep(sleep_s)
+                    continue
+
+                if r.status_code >= 400:
+                    # Do not retry schema/model issues etc.
+                    raise RuntimeError(f"OpenAI HTTP {r.status_code}: {r.text}")
+
+                return r.json()
+
+            except (RequestException, OSError) as e:
+                # Connection reset, TLS hiccups, etc.
+                last_err = e
+                if attempt == max_attempts:
+                    break
+                sleep_s = min(base_sleep * (2 ** (attempt - 1)), max_sleep)
+                time.sleep(sleep_s)
+
+        raise RuntimeError(f"OpenAI request failed after {max_attempts} attempts: {last_err}") from last_err
 
 def extract_output_text(resp: Dict[str, Any]) -> str:
     parts: List[str] = []
@@ -135,11 +180,49 @@ Return a single JSON object that matches the schema exactly.
 - event.rationale: one sentence (max 25 words)
 """
 
-def embed_batch(client: OpenAIHTTP, texts: List[str], model: str) -> List[List[float]]:
+
+def embed_batch(
+    client: OpenAIHTTP,
+    texts: List[str],
+    model: str,
+    retries: int = 5,
+    sleep_s: float = 1.0,
+) -> List[List[float]]:
     payload = {"model": model, "input": texts}
-    out = client.post("/embeddings", payload, timeout=120)
-    data = out.get("data", [])
-    return [d["embedding"] for d in data]
+
+    last_err: Optional[Exception] = None
+    for k in range(retries + 1):
+        try:
+            out = client.post("/embeddings", payload, timeout=120)
+            data = out.get("data", [])
+
+            if len(data) != len(texts):
+                raise RuntimeError(
+                    f"Embedding batch size mismatch: got {len(data)} embeddings for {len(texts)} inputs"
+                )
+
+            return [d["embedding"] for d in data]
+
+        except Exception as e:
+            last_err = e
+
+            # If the API returned a hard 4xx (other than 429), don't spin forever.
+            msg = str(e)
+            hard_4xx = (
+                ("OpenAI HTTP 400" in msg)
+                or ("OpenAI HTTP 401" in msg)
+                or ("OpenAI HTTP 403" in msg)
+                or ("OpenAI HTTP 404" in msg)
+            )
+            if hard_4xx:
+                raise
+
+            # Backoff (1,2,4,8,16...) with a cap
+            delay = min(60.0, sleep_s * (2 ** k))
+            print(f"[WARN] embeddings request failed (attempt {k+1}/{retries+1}): {e} ; sleeping {delay:.1f}s")
+            time.sleep(delay)
+
+    raise RuntimeError(f"OpenAI embeddings failed after retries: {last_err}") from last_err
 
 def classify_one(client: OpenAIHTTP, payload: Dict[str, Any], retries: int = 2, sleep_s: float = 1.0) -> Dict[str, Any]:
     last_err: Optional[Exception] = None
@@ -250,18 +333,68 @@ def run(
             raise RuntimeError(f"clusters.parquet missing required column: {col}")
 
     df["rep_text"] = df.apply(build_rep_text, axis=1)
+    reps: List[str] = df["rep_text"].astype(str).tolist()
 
-    # ---- Embeddings (batched) ----
-    reps = df["rep_text"].fillna("").astype(str).tolist()
-    embeddings: List[List[float]] = []
-    for i in tqdm(range(0, len(reps), emb_batch_size), desc="embeddings"):
-        batch = reps[i:i+emb_batch_size]
-        embeddings.extend(embed_batch(client, batch, emb_model))
-        if sleep_s:
-            time.sleep(sleep_s)
+    # Build the ordered list of representative texts (1:1 aligned with df rows)
+    reps: List[str] = df["rep_text"].astype(str).tolist()
 
-    if len(embeddings) != len(df):
-        raise RuntimeError("Embedding count mismatch")
+    # ----------------------------
+    # Embeddings: checkpoint + resume (index-based)
+    # ----------------------------
+    emb_ckpt = out_parquet.parent / "embeddings_checkpoint.parquet"
+    embeddings: List[Optional[List[float]]] = [None] * len(reps)
+
+    # Load checkpoint if present (and not forcing rebuild)
+    if emb_ckpt.exists() and not force:
+        try:
+            ck = pd.read_parquet(emb_ckpt)
+            # expected columns: idx, embedding
+            if "idx" in ck.columns and "embedding" in ck.columns and len(ck) > 0:
+                for _, r in ck.iterrows():
+                    j = int(r["idx"])
+                    if 0 <= j < len(embeddings):
+                        embeddings[j] = r["embedding"]
+            print(f"[INFO] loaded embeddings checkpoint: {emb_ckpt} ({ck.shape[0]} rows)")
+        except Exception as e:
+            print(f"[WARN] failed to load embeddings checkpoint {emb_ckpt}: {e}")
+
+    def _write_emb_ckpt(vecs: List[Optional[List[float]]]) -> None:
+        rows = [(i, v) for i, v in enumerate(vecs) if v is not None]
+        if not rows:
+            return
+        ckdf = pd.DataFrame(rows, columns=["idx", "embedding"])
+        emb_ckpt.parent.mkdir(parents=True, exist_ok=True)
+        write_parquet_atomic(ckdf, emb_ckpt)
+
+    # Resume at first missing index
+    start_i = 0
+    while start_i < len(embeddings) and embeddings[start_i] is not None:
+        start_i += 1
+
+    if start_i == len(embeddings):
+        print("[INFO] embeddings already complete from checkpoint")
+    else:
+        for i in tqdm(range(start_i, len(reps), emb_batch_size), desc="embeddings"):
+            # Find next contiguous missing run starting at i
+            if embeddings[i] is not None:
+                continue
+            batch = reps[i : i + emb_batch_size]
+            batch_emb = embed_batch(client, batch, emb_model)
+
+            # Assign back into the embeddings list
+            for k, v in enumerate(batch_emb):
+                embeddings[i + k] = v
+
+            # Checkpoint every batch (small + safe; can tune later)
+            _write_emb_ckpt(embeddings)
+
+    # Final sanity check
+    if any(v is None for v in embeddings):
+        missing = sum(1 for v in embeddings if v is None)
+        raise RuntimeError(f"Embeddings incomplete: missing {missing} of {len(embeddings)} vectors")
+
+    # Type-narrow to the expected downstream type
+    embeddings = [v for v in embeddings if v is not None]
 
     # ---- Classification (serial v1; can parallelize later) ----
     sent_jsons = []
