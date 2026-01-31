@@ -160,7 +160,7 @@ jobs:
             --universe "${{ inputs.universe }}" \
             --regime "${{ inputs.regime }}" \
             --schema "${{ inputs.schema }}" \
-            --from_stage "news"
+            --from_stage "news" \
             ${FORCE_FLAG}
 
           echo "=== Verify expected artifacts exist for ${WEEK} ==="
@@ -194,4 +194,3 @@ jobs:
             data/derived/rep_enriched/week_ending=${{ inputs.week_end_2 }}/
             data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
             data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
-
