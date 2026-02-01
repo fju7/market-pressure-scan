@@ -376,13 +376,15 @@ def build_news_feature_panel(
         if getattr(df.index, "name", None) == "symbol":
             df = df.reset_index()
     # common alternate naming
-    elif "ticker" in df.columns:
-        df = df.rename(columns={"ticker": "symbol"})
-    elif "Symbol" in df.columns:
-        df = df.rename(columns={"Symbol": "symbol"})
-    else:
-        raise ValueError(f"Missing 'symbol' column in rep_enriched. cols={list(df.columns)} index_name={df.index.name}")
-
+        elif "ticker" in df.columns:
+            df = df.rename(columns={"ticker": "symbol"})
+        elif "Symbol" in df.columns:
+            df = df.rename(columns={"Symbol": "symbol"})
+        else:
+            raise ValueError(
+                f"Missing 'symbol' column in rep_enriched. "
+                f"cols={list(df.columns)} index_name={df.index.name}"
+    
     if df_cur.empty:
         raise ValueError(
             f"rep_enriched has no rows for week_end={week_end_ts.date()}. "
