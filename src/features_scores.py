@@ -370,6 +370,19 @@ def build_news_feature_panel(
     df_cur = df[df["week_ending_date"] == week_end_ts].copy()
     df_hist = df[df["week_ending_date"] != week_end_ts].copy()
 
+    # --- normalize symbol column (defensive) ---
+    if "symbol" not in df.columns:
+        # common case: symbol was saved as index
+        if getattr(df.index, "name", None) == "symbol":
+            df = df.reset_index()
+    # common alternate naming
+    elif "ticker" in df.columns:
+        df = df.rename(columns={"ticker": "symbol"})
+    elif "Symbol" in df.columns:
+        df = df.rename(columns={"Symbol": "symbol"})
+    else:
+        raise ValueError(f"Missing 'symbol' column in rep_enriched. cols={list(df.columns)} index_name={df.index.name}")
+
     if df_cur.empty:
         raise ValueError(
             f"rep_enriched has no rows for week_end={week_end_ts.date()}. "
