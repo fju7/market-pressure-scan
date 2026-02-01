@@ -36,6 +36,29 @@ def iter_fridays(from_week_end: date, to_week_end: date) -> List[date]:
         d = d + timedelta(days=7)
     return out
 
+def list_score_weeks(scores_dir: Path) -> List[date]:
+    """
+    Return sorted list of week_end dates that actually exist on disk
+    as week_ending=YYYY-MM-DD/scores_weekly.parquet under scores_dir.
+    """
+    out: List[date] = []
+    if not scores_dir.exists():
+        return out
+
+    for d in sorted(scores_dir.glob("week_ending=*")):
+        if not d.is_dir():
+            continue
+        f = d / "scores_weekly.parquet"
+        if not f.exists():
+            continue
+
+        week_str = d.name.split("week_ending=")[-1]
+        try:
+            out.append(parse_date(week_str))
+        except Exception:
+            continue
+
+    return sorted(out)
 
 def load_universe(universe_csv: Path) -> pd.DataFrame:
     df = pd.read_csv(universe_csv)
@@ -173,7 +196,7 @@ class Paths:
     out_dir: Path
 
 
-def default_paths(regime: str, schema: str) -> Paths:
+def default_paths(regime: str, schema: str, out_dir: Optional[Path] = None) -> Paths:
     root = Path(__file__).resolve().parents[1]
     derived = root / "data" / "derived"
     scores_dir = derived / "scores_weekly" / f"regime={regime}" / f"schema={schema}"
@@ -182,7 +205,7 @@ def default_paths(regime: str, schema: str) -> Paths:
         derived=derived,
         scores_dir=scores_dir,
         market_daily=derived / "market_daily" / "candles_daily.parquet",
-        out_dir=derived / "backtest",
+        out_dir=out_dir if out_dir is not None else (derived / "backtest"),
     )
 
 
@@ -206,8 +229,10 @@ def run_backtest(
     top_n: int = 20,
     sector_cap: int = 5,
     tc_roundtrip_bps: float = 30.0,
+    out_dir: Optional[Path] = None,
+    skip_missing_scores: bool = False,
 ):
-    paths = default_paths(regime=regime, schema=schema)
+    paths = default_paths(regime=regime, schema=schema, out_dir=out_dir)
     uni = load_universe(universe_csv)
 
     if not paths.market_daily.exists():
@@ -221,17 +246,26 @@ def run_backtest(
 
     from_d = parse_date(from_week_end)
     to_d = parse_date(to_week_end)
-    weeks = iter_fridays(from_d, to_d)
+    all_weeks = list_score_weeks(paths.scores_dir)
+    weeks = [w for w in all_weeks if (w >= from_d and w <= to_d)]
+    print(f"Backtest weeks (on disk) in range: {len(weeks)}")
 
     bt_rows = []
     pos_rows = []
+    missing_score_weeks: List[str] = []
 
     prev_weights: Dict[str, float] = {}
     tc_rate = tc_roundtrip_bps / 10000.0  # bps -> fraction
 
     for w in weeks:
         w_str = w.isoformat()
-        scores = load_scores_for_week(paths, w_str)
+        try:
+            scores = load_scores_for_week(paths, w_str)
+        except FileNotFoundError:
+            if skip_missing_scores:
+                missing_score_weeks.append(w_str)
+                continue
+            raise
 
         # attach sector from universe if missing/unknown
         if "sector" not in scores.columns or scores["sector"].isna().all():
@@ -311,6 +345,8 @@ def run_backtest(
 
     print(f"Wrote: {bt_path} ({len(bt):,} rows)")
     print(f"Wrote: {pos_path} ({len(pos):,} rows)")
+    if missing_score_weeks:
+        print(f"NOTE: skipped {len(missing_score_weeks)} week(s) with missing scores: {missing_score_weeks}")
     if not bt.empty:
         print(bt.tail(10).to_string(index=False))
 
@@ -325,6 +361,8 @@ if __name__ == "__main__":
     ap.add_argument("--top_n", type=int, default=20)
     ap.add_argument("--sector_cap", type=int, default=5)
     ap.add_argument("--tc_bps", type=float, default=30.0, help="Round-trip transaction cost in bps, applied on turnover")
+    ap.add_argument("--out_dir", default=None, help="Output directory for backtest artifacts (default: data/derived/backtest)")
+    ap.add_argument("--skip_missing_scores", action="store_true", help="Skip weeks that have no scores_weekly.parquet instead of failing")
     args = ap.parse_args()
 
     run_backtest(
@@ -336,4 +374,6 @@ if __name__ == "__main__":
         top_n=args.top_n,
         sector_cap=args.sector_cap,
         tc_roundtrip_bps=args.tc_bps,
+        out_dir=Path(args.out_dir) if args.out_dir else None,
+        skip_missing_scores=bool(args.skip_missing_scores),
     )
