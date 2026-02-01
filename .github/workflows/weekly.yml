@@ -236,6 +236,40 @@ jobs:
             --bottom_n 10 \
             --horizons 5,10,20
 
+
+      - name: Backtest (single week_end)
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+          REGIME_ID: news-novelty-v1
+          SCHEMA_ID: news-novelty-v1b
+        run: |
+          set -euo pipefail
+          : "${WEEK_END:?WEEK_END not set}"
+          python src/backtest_weekly.py \
+            --universe ./sp500_universe.csv \
+            --from_week_end "${WEEK_END}" \
+            --to_week_end "${WEEK_END}" \
+            --regime "${REGIME_ID}" \
+            --schema "${SCHEMA_ID}" \
+            --top_n 20 \
+            --sector_cap 5 \
+            --tc_bps 30
+          test -f data/derived/backtest/bt_weekly.parquet || (echo "❌ bt_weekly.parquet missing after backtest" && exit 1)
+
+      - name: Evaluate complete weeks (backtest vs candles)
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+        run: |
+          set -euo pipefail
+          mkdir -p data/derived/analysis
+          python -m src.research.eval_complete_weeks \
+            --bt data/derived/backtest/bt_weekly.parquet \
+            --candles data/derived/market_daily/candles_daily.parquet \
+            --out_dir data/derived/analysis
+          test -f data/derived/analysis/evaluation_complete_weeks.md || (echo "❌ evaluation_complete_weeks.md missing" && exit 1)
+          test -f data/derived/analysis/perf_complete_weeks.csv || (echo "❌ perf_complete_weeks.csv missing" && exit 1)
+          test -f data/derived/analysis/perf_summary.json || (echo "❌ perf_summary.json missing" && exit 1)
+
       - name: Verify evaluation artifacts exist
         env:
           WEEK_END: ${{ steps.week_end.outputs.week_end }}
@@ -258,6 +292,13 @@ jobs:
             data/derived/rep_enriched/week_ending=${{ steps.week_end.outputs.week_end }}/**
             data/derived/features_weekly/**/week_ending=${{ steps.week_end.outputs.week_end }}/**
             data/derived/scores_weekly/**/week_ending=${{ steps.week_end.outputs.week_end }}/**
+
+            # Evaluation outputs (complete-weeks report)
+            data/derived/analysis/evaluation_complete_weeks.md
+            data/derived/analysis/perf_complete_weeks.csv
+            data/derived/analysis/perf_summary.json
+            data/derived/analysis/weeks_eval_complete.txt
+            data/derived/analysis/weeks_eval_incomplete.txt
 
             # Outputs / reporting
             data/derived/trader_sheets/**
