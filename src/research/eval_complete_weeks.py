@@ -351,6 +351,37 @@ def main() -> None:
     regime_join.sort_values("signal_week_end").to_csv(regime_csv, index=False)
     print(f"Wrote: {regime_csv}")
 
+    # Continuous regime strength vs active return (evaluation-only)
+    strength_cols = ["signal_week_end", "score_col", "regime_base_col", "rs_top10_mean", "active_net_return"]
+    strength_df = regime_join[strength_cols].copy() if all(c in regime_join.columns for c in strength_cols) else pd.DataFrame()
+    strength_path = out_dir / "regime_strength_vs_active.csv"
+    if not strength_df.empty:
+        strength_df = strength_df.sort_values("signal_week_end")
+        strength_df.to_csv(strength_path, index=False)
+        print(f"Wrote: {strength_path}")
+    else:
+        print(f"NOTE: strength_df empty; not writing {strength_path}")
+
+    # Correlations (no SciPy): Pearson + Pearson-on-ranks (Spearman-like)
+    corr_summary = {}
+    if not strength_df.empty:
+        x = pd.to_numeric(strength_df["rs_top10_mean"], errors="coerce")
+        y = pd.to_numeric(strength_df["active_net_return"], errors="coerce")
+        ok = x.notna() & y.notna()
+        if ok.sum() >= 2:
+            corr_summary["n"] = int(ok.sum())
+            corr_summary["pearson"] = float(x[ok].corr(y[ok]))
+            xr = x[ok].rank(method="average")
+            yr = y[ok].rank(method="average")
+            corr_summary["spearman_like"] = float(xr.corr(yr))
+        else:
+            corr_summary["n"] = int(ok.sum())
+            corr_summary["pearson"] = float("nan")
+            corr_summary["spearman_like"] = float("nan")
+    corr_path = out_dir / "regime_strength_summary.json"
+    corr_path.write_text(json.dumps(corr_summary, indent=2) + "\n")
+    print(f"Wrote: {corr_path}")
+
     # Bucket summary (active_net_return)
     regime_ok = regime_join[regime_join["regime_missing"] == False].copy()  # noqa: E712
     if not regime_ok.empty and "regime_bucket" in regime_ok.columns:
