@@ -65,8 +65,11 @@ def select_top_with_sector_cap(
     for _, r in s.iterrows():
         sec = str(r.get("sector", "Unknown"))
         counts.setdefault(sec, 0)
-        if counts[sec] >= sector_cap:
-            continue
+        # If sector is unknown/blank, do NOT enforce the sector cap.
+        # This prevents accidental 5-position portfolios when universe sectors are missing.
+        if sec not in ("Unknown", "", "nan", "None"):
+            if counts[sec] >= sector_cap:
+                continue
         picks.append(r)
         counts[sec] += 1
         if len(picks) >= top_n:
