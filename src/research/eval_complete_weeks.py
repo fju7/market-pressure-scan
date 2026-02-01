@@ -100,6 +100,82 @@ def _markdown_table(df: pd.DataFrame, float_fmt: str = "{:.6f}") -> str:
     return "\n".join([header, sep, body])
 
 
+def _compute_regime_buckets(weeks: List[str], scores_root: Path) -> pd.DataFrame:
+    """
+    Compute regime-strength metadata for each signal_week_end.
+    - Loads per-week scores_weekly.parquet from scores_root/week_ending=YYYY-MM-DD/
+    - Uses base col: UPS_adj if present else score
+    - rs_top10_mean: mean of top decile of base col
+    - regime_pct: percentile rank across provided weeks
+    - regime_bucket: LOW/MID/HIGH terciles
+    This is evaluation-only metadata (no trading changes).
+    """
+    rows = []
+    for week_end in weeks:
+        f = scores_root / f"week_ending={week_end}" / "scores_weekly.parquet"
+        if not f.exists():
+            rows.append({
+                "signal_week_end": str(week_end),
+                "regime_missing": True,
+                "regime_base_col": "",
+                "rs_top10_mean": float("nan"),
+            })
+            continue
+
+        df = pd.read_parquet(f)
+        base = "UPS_adj" if "UPS_adj" in df.columns else ("score" if "score" in df.columns else "")
+        if not base:
+            rows.append({
+                "signal_week_end": str(week_end),
+                "regime_missing": True,
+                "regime_base_col": "",
+                "rs_top10_mean": float("nan"),
+            })
+            continue
+
+        x = pd.to_numeric(df[base], errors="coerce").dropna().to_numpy()
+        if x.size == 0:
+            rows.append({
+                "signal_week_end": str(week_end),
+                "regime_missing": True,
+                "regime_base_col": base,
+                "rs_top10_mean": float("nan"),
+            })
+            continue
+
+        x_sorted = np.sort(x)
+        top_n = max(1, int(0.10 * x_sorted.size))
+        rs_top10_mean = float(np.mean(x_sorted[-top_n:]))
+
+        rows.append({
+            "signal_week_end": str(week_end),
+            "regime_missing": False,
+            "regime_base_col": base,
+            "rs_top10_mean": rs_top10_mean,
+        })
+
+    reg = pd.DataFrame(rows)
+    ok = reg[~reg["regime_missing"]].copy()
+    if not ok.empty:
+        ok["regime_pct"] = ok["rs_top10_mean"].rank(pct=True)
+        ok["regime_bucket"] = pd.cut(
+            ok["regime_pct"],
+            bins=[0.0, 1/3, 2/3, 1.0],
+            labels=["LOW", "MID", "HIGH"],
+            include_lowest=True,
+        )
+    else:
+        ok["regime_pct"] = []
+        ok["regime_bucket"] = []
+
+    reg = reg.merge(
+        ok[["signal_week_end", "regime_pct", "regime_bucket"]],
+        on="signal_week_end",
+        how="left",
+    )
+    return reg
+
+
 @dataclass(frozen=True)
 class Paths:
     bt_weekly_all: Path
@@ -158,6 +234,11 @@ def main() -> None:
     ap.add_argument("--candles", default=None, help="Path to candles_daily.parquet")
     ap.add_argument("--out_dir", default=None, help="Output directory (default: data/derived/analysis)")
     ap.add_argument("--ann_factor", type=float, default=52.0, help="Annualization factor (weekly=52)")
+    ap.add_argument(
+        "--scores_root",
+        default=None,
+        help="Root dir for per-week scores (default: data/derived/scores_weekly/regime=news-novelty-v1/schema=news-novelty-v1b)",
+    )
     args = ap.parse_args()
 
     p = default_paths()
@@ -256,6 +337,38 @@ def main() -> None:
     c[keep_cols].sort_values("signal_week_end").to_csv(perf_csv, index=False)
     print(f"Wrote: {perf_csv}")
 
+    # Regime buckets (evaluation-only)
+    scores_root = Path(args.scores_root) if args.scores_root else Path(
+        "data/derived/scores_weekly/regime=news-novelty-v1/schema=news-novelty-v1b"
+    )
+    regime = _compute_regime_buckets(complete_weeks, scores_root)
+    regime_join = c[["signal_week_end", "active_net_return", "score_col"]].merge(
+        regime,
+        on="signal_week_end",
+        how="left",
+    )
+    regime_csv = out_dir / "regime_buckets_complete_weeks.csv"
+    regime_join.sort_values("signal_week_end").to_csv(regime_csv, index=False)
+    print(f"Wrote: {regime_csv}")
+
+    # Bucket summary (active_net_return)
+    regime_ok = regime_join[regime_join["regime_missing"] == False].copy()  # noqa: E712
+    if not regime_ok.empty and "regime_bucket" in regime_ok.columns:
+        bucket_summary = (
+            regime_ok.groupby("regime_bucket", observed=True)
+            .agg(
+                weeks=("active_net_return", "count"),
+                mean_return=("active_net_return", "mean"),
+                median_return=("active_net_return", "median"),
+                hit_rate=("active_net_return", lambda x: float((pd.to_numeric(x, errors="coerce") > 0).mean())),
+                max_return=("active_net_return", "max"),
+                min_return=("active_net_return", "min"),
+            )
+            .reset_index()
+        )
+    else:
+        bucket_summary = pd.DataFrame()
+
     # Markdown report
     md_path = out_dir / "evaluation_complete_weeks.md"
     lines: List[str] = []
@@ -284,6 +397,30 @@ def main() -> None:
     table_df = c[keep_cols].sort_values("signal_week_end")
     lines.append(_markdown_table(table_df, float_fmt="{:.6f}"))
     lines.append("")
+
+    # Regime buckets section (evaluation-only)
+    lines.append("## Regime buckets (rs_top10_mean)\n")
+    lines.append("- Base column per week: `UPS_adj` if present else `score`")
+    lines.append("- `rs_top10_mean`: mean of the top decile of the base column across symbols")
+    lines.append("- `regime_pct`: percentile rank across **complete weeks only**")
+    lines.append("- `regime_bucket`: terciles of `regime_pct` (LOW/MID/HIGH)\n")
+    lines.append(f"- scores_root: `{scores_root}`\n")
+    if bucket_summary is not None and not bucket_summary.empty:
+        lines.append("### Bucket summary (active_net_return)\n")
+        lines.append(_markdown_table(bucket_summary, float_fmt="{:.6f}"))
+        lines.append("")
+    else:
+        lines.append("_(No regime bucket summary available.)\n")
+    # List weeks by bucket
+    try:
+        if "regime_bucket" in regime_ok.columns and not regime_ok.empty:
+            lines.append("### Weeks by bucket\n")
+            for b in ["LOW", "MID", "HIGH"]:
+                w = regime_ok.loc[regime_ok["regime_bucket"] == b, "signal_week_end"].astype(str).tolist()
+                lines.append(f"- **{b}**: " + (", ".join(w) if w else "_(none)_"))
+            lines.append("")
+    except Exception:
+        pass
 
     if len(incomplete):
         lines.append("## Incomplete weeks detail\n")
