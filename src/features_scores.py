@@ -370,52 +370,78 @@ def build_news_feature_panel(
     df_cur = df[df["week_ending_date"] == week_end_ts].copy()
     df_hist = df[df["week_ending_date"] != week_end_ts].copy()
 
+    # --- normalize symbol column (defensive) ---
+    if "symbol" not in df.columns:
+        # common case: symbol was saved as index
+        if getattr(df.index, "name", None) == "symbol":
+            df = df.reset_index()
+    # common alternate naming
+        elif "ticker" in df.columns:
+            df = df.rename(columns={"ticker": "symbol"})
+        elif "Symbol" in df.columns:
+            df = df.rename(columns={"Symbol": "symbol"})
+        else:
+            raise ValueError(
+                f"Missing 'symbol' column in rep_enriched. "
+                f"cols={list(df.columns)} index_name={df.index.name}"
+    
     if df_cur.empty:
         raise ValueError(
             f"rep_enriched has no rows for week_end={week_end_ts.date()}. "
             f"Available weeks: {sorted(df['week_ending_date'].dt.date.unique().tolist())}"
         )
-
     # current counts per symbol (dedup clusters)
     cur_counts = (
-    df_cur.groupby("symbol", as_index=False)
-    .agg(
-        # "dedup clusters" = unique clusters, not sum of cluster sizes
-        count_5d_dedup=("cluster_id", "nunique"),
-
-        # keep EC_raw as "average cluster size" (even if placeholder right now)
-        EC_raw=("cluster_size", "mean"),
-        unique_sources_mean=("unique_sources", "mean"),
-    )
-)
-    # optional extra diagnostics (helpful while debugging)
-    rep_rows_5d=("cluster_id", "size"),
-    
-    hist_by_week = (
-        df_hist.groupby(["week_ending_date", "symbol"], as_index=False)
+        df_cur.groupby("symbol", as_index=False)
         .agg(
-            # weekly dedup clusters = unique cluster_ids that week
-            count_week=("cluster_id", "nunique")
-    )
-        .sort_values(["symbol", "week_ending_date"])
-)
-
-    def add_roll(g: pd.DataFrame) -> pd.DataFrame:
-        g = g.sort_values("week_ending_date")
-        g["count_20d_dedup"] = g["count_week"].rolling(window=4, min_periods=1).sum()
-        g["count_60d_dedup"] = g["count_week"].rolling(window=12, min_periods=1).sum()
-        return g
-
-    if not hist_by_week.empty:
-        hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
-        hist_latest = (
-            hist_by_week.groupby("symbol", as_index=False)
-            .tail(1)[["symbol", "count_20d_dedup", "count_60d_dedup"]]
+            # "dedup clusters" = unique clusters, not sum of cluster sizes
+            count_5d_dedup=("cluster_id", "nunique"),
+            # keep EC_raw as "average cluster size" (even if placeholder right now)
+            EC_raw=("cluster_size", "mean"),
+            unique_sources_mean=("unique_sources", "mean"),
+            # optional extra diagnostics (helpful while debugging)
+            rep_rows_5d=("cluster_id", "size"),
         )
-    else:
-        hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
+    )
+
+          # ---- history rollups (prior weeks) ----
+      # df_hist can be completely empty (and sometimes columnless) if no prior score/history
+      # weeks were found (e.g., mismatched Thu vs Fri week_end naming).
+      need_cols = {"week_ending_date", "symbol", "cluster_id"}
+      if df_hist is None or df_hist.empty or not need_cols.issubset(set(df_hist.columns)):
+          hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
+      else:
+          hist_by_week = (
+              df_hist.groupby(["week_ending_date", "symbol"], as_index=False)
+              .agg(
+                  # weekly dedup clusters = unique cluster_ids that week
+                  count_week=("cluster_id", "nunique")
+              )
+              .sort_values(["symbol", "week_ending_date"])
+          )
+
+          def add_roll(g: pd.DataFrame) -> pd.DataFrame:
+              g = g.sort_values("week_ending_date")
+              g["count_20d_dedup"] = g["count_week"].rolling(window=4, min_periods=1).sum()
+              g["count_60d_dedup"] = g["count_week"].rolling(window=12, min_periods=1).sum()
+              return g
+
+          if not hist_by_week.empty:
+              hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
+
+              # If pandas suggestion or version puts symbol into the index, recover it
+              if "symbol" not in hist_by_week.columns:
+                  hist_by_week = hist_by_week.reset_index()
+
+              hist_latest = (
+                  hist_by_week.groupby("symbol", as_index=False)
+                  .tail(1)[["symbol", "count_20d_dedup", "count_60d_dedup"]]
+              )
+          else:
+              hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
 
     cur = cur_counts.merge(hist_latest, on="symbol", how="left")
+
     cur["count_20d_dedup"] = pd.to_numeric(cur["count_20d_dedup"], errors="coerce").fillna(0.0)
     cur["count_60d_dedup"] = pd.to_numeric(cur["count_60d_dedup"], errors="coerce").fillna(0.0)
 
@@ -535,6 +561,7 @@ def compute_scores(
         df["event_intensity_factor"] = 0.5 * df["z_EI_raw"] + 0.5 * df["z_EC_raw"]
         df["sentiment_factor"] = df["z_SS_raw"]
         df["divergence_factor"] = (df["z_AR5"] - df["z_SS_raw"]).abs()
+        df["divergence"] = df["divergence_factor"]
 
         df["UPS_raw"] = (
             w_nov * df["novelty_factor"]
@@ -595,7 +622,7 @@ def compute_scores(
         "UPS_adj",
     ]
     if "novelty_factor" in df.columns:
-        features_cols += ["novelty_factor", "event_intensity_factor", "sentiment_factor", "divergence_factor"]
+        features_cols += ["novelty_factor", "event_intensity_factor", "sentiment_factor", "divergence_factor", "divergence"]
 
     features = df[[c for c in features_cols if c in df.columns]].copy()
 

@@ -269,13 +269,22 @@ def build_report_markdown(
         join_keys = ["symbol"] if "symbol" in scores.columns and "symbol" in feats.columns else []
     df = scores.merge(feats, on=join_keys, how="left", suffixes=("", "_f")) if join_keys else scores.copy()
 
-    if "UPS_adj" not in df.columns:
-        raise KeyError("scores file is missing required column 'UPS_adj' (cannot rank).")
-    if "DPS_adj" not in df.columns:
-        df["DPS_adj"] = np.nan
+    # Choose score column for ranking. Newer outputs may have UPS_adj; older ones have "score".
+    score_candidates = ["UPS_adj", "score", "UPS_raw"]
+    score_col = next((c for c in score_candidates if c in df.columns), None)
+    if score_col is None:
+        raise KeyError(
+            "scores file is missing a usable score column. "
+            f"Tried {score_candidates}. Available columns={list(df.columns)}"
+        )
 
-    top = df.sort_values("UPS_adj", ascending=False).head(top_n).copy()
-    bot = df.sort_values("DPS_adj", ascending=False).head(bottom_n).copy()
+    top = df.sort_values(score_col, ascending=False).head(top_n).copy()
+
+    # Bottom ranking: prefer DPS_adj if present; otherwise use the same score column (ascending).
+    if "DPS_adj" in df.columns:
+        bot = df.sort_values("DPS_adj", ascending=False).head(bottom_n).copy()
+    else:
+        bot = df.sort_values(score_col, ascending=True).head(bottom_n).copy()
 
     # PRICE_ACTION_RECAP percentage from enriched data (if available)
     recap_pct = 0.0
@@ -338,13 +347,13 @@ def build_report_markdown(
     sector_col = "sector" if "sector" in top.columns else None
     lines.append(f"## Top {len(top)} Upside Pressure (UPS)")
     lines.append("")
-    lines.append("| Rank | Ticker | Sector | UPS_adj | z_NV | z_EI | z_SS | z_AR5 | Dominant driver | Conviction | Rationale |")
+    lines.append(f"| Rank | Ticker | Sector | {score_col} | z_NV | z_EI | z_SS | z_AR5 | Dominant driver | Conviction | Rationale |")
     lines.append("|---:|:---|:---|---:|---:|---:|---:|---:|:---|:---|:---|")
 
     for i, (_, r) in enumerate(top.iterrows(), start=1):
         sym = str(r.get("symbol", ""))
         sec = str(r.get(sector_col, "Unknown")) if sector_col else "Unknown"
-        ups_val = float(r.get("UPS_adj", np.nan))
+        ups_val = float(r.get(score_col, np.nan))
         z_nv = float(r.get("z_NV_raw", np.nan))
         z_ei = float(r.get("z_EI_raw", np.nan))
         z_ss = float(r.get("z_SS_raw", np.nan))

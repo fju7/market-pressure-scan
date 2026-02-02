@@ -34,8 +34,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
+          python-version: "3.12" 
       - name: Install deps
         run: |
           set -euo pipefail
@@ -114,10 +113,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/derived/market_daily
-          key: market-daily-${{ runner.os }}-${{ env.WEEK_END }}
-          restore-keys: |
-            market-daily-${{ runner.os }}-
-
+          key: market-daily-${{ runner.os }}-v1
+          
       - name: Ingest market candles (required for scoring)
         run: |
           set -euo pipefail
@@ -192,7 +189,7 @@ jobs:
           test -n "${OPENAI_API_KEY}" || (echo "❌ OPENAI_API_KEY secret missing" && exit 1)
           echo "✓ Required secrets present"
 
-      - name: Run pipeline (ingest → cluster → enrich → score → report)
+      - name: Run weekly pipeline (canonical orchestrator) 
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -200,23 +197,86 @@ jobs:
           REGIME_ID: news-novelty-v1
           SCHEMA_ID: news-novelty-v1b
         run: |
-          set -euo pipefail
-          echo "Running pipeline for WEEK_END=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID}"
+          set -euxo pipefail
+          echo "=== Running week_end=${WEEK_END} REGIME_ID=${REGIME_ID} SCHEMA_ID=${SCHEMA_ID} ==="
 
-          python -m src.ingest_company_news --week_end "${WEEK_END}" --universe sp500_universe.csv
-          python -m src.cluster_news --week_end "${WEEK_END}"
-          python -m src.enrich_reps_openai --week_end "${WEEK_END}"
+          # satisfy week_end mismatch guard (same pattern as backfill)
+          echo "${WEEK_END}" > week_end.txt
+          cat week_end.txt
 
-          python -m src.features_scores \
+          python -m src.run_weekly_pipeline \
+            --week_end "${WEEK_END}" \
             --universe sp500_universe.csv \
-            --week_end "${WEEK_END}" \
             --regime "${REGIME_ID}" \
-            --schema "${SCHEMA_ID}"
+            --schema "${SCHEMA_ID}" \
+            --from_stage "candles"
+        
+      - name: Verify candles max date (pre-eval)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pandas as pd
+          p = "data/derived/market_daily/candles_daily.parquet"
+          df = pd.read_parquet(p, columns=["date"])
+          print("candles_daily max:", pd.to_datetime(df["date"]).max())
+          PY
+    
+      - name: Evaluate hypothesis (artifact-only)
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+          REGIME_ID: news-novelty-v1
+          SCHEMA_ID: news-novelty-v1b
+        run: |
+          set -euo pipefail
+          python -m src.evaluate_hypothesis \
+            --schema "${SCHEMA_ID}" \
+            --regime "${REGIME_ID}" \
+            --weeks "${WEEK_END}" \
+            --top_n 10 \
+            --bottom_n 10 \
+            --horizons 5,10,20
 
-          python -m src.report_weekly \
-            --week_end "${WEEK_END}" \
+
+      - name: Backtest (single week_end)
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+          REGIME_ID: news-novelty-v1
+          SCHEMA_ID: news-novelty-v1b
+        run: |
+          set -euo pipefail
+          : "${WEEK_END:?WEEK_END not set}"
+          python src/backtest_weekly.py \
+            --universe ./sp500_universe.csv \
+            --from_week_end "${WEEK_END}" \
+            --to_week_end "${WEEK_END}" \
             --regime "${REGIME_ID}" \
-            --schema "${SCHEMA_ID}"
+            --schema "${SCHEMA_ID}" \
+            --top_n 20 \
+            --sector_cap 5 \
+            --tc_bps 30
+          test -f data/derived/backtest/bt_weekly.parquet || (echo "❌ bt_weekly.parquet missing after backtest" && exit 1)
+
+      - name: Evaluate complete weeks (backtest vs candles)
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+        run: |
+          set -euo pipefail
+          mkdir -p data/derived/analysis
+          python -m src.research.eval_complete_weeks \
+            --bt data/derived/backtest/bt_weekly.parquet \
+            --candles data/derived/market_daily/candles_daily.parquet \
+            --out_dir data/derived/analysis
+          test -f data/derived/analysis/evaluation_complete_weeks.md || (echo "❌ evaluation_complete_weeks.md missing" && exit 1)
+          test -f data/derived/analysis/perf_complete_weeks.csv || (echo "❌ perf_complete_weeks.csv missing" && exit 1)
+          test -f data/derived/analysis/perf_summary.json || (echo "❌ perf_summary.json missing" && exit 1)
+
+      - name: Verify evaluation artifacts exist
+        env:
+          WEEK_END: ${{ steps.week_end.outputs.week_end }}
+        run: |
+          set -euo pipefail
+          test -f "data/derived/analysis/hypothesis_eval/week_ending=${WEEK_END}/evaluation.md"
+          test -f "data/derived/analysis/hypothesis_eval/summary.csv"
 
       - name: Upload artifacts
         if: always()
@@ -225,11 +285,27 @@ jobs:
           name: trader-sheet-and-report
           path: |
             week_end.txt
+
+            # Forensics (keep per-week raw-ish artifacts)
+            data/derived/company_news/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/news_clusters/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/rep_enriched/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/features_weekly/**/week_ending=${{ steps.week_end.outputs.week_end }}/**
+            data/derived/scores_weekly/**/week_ending=${{ steps.week_end.outputs.week_end }}/**
+
+            # Evaluation outputs (complete-weeks report)
+            data/derived/analysis/evaluation_complete_weeks.md
+            data/derived/analysis/perf_complete_weeks.csv
+            data/derived/analysis/perf_summary.json
+            data/derived/analysis/weeks_eval_complete.txt
+            data/derived/analysis/weeks_eval_incomplete.txt
+
+            # Outputs / reporting
             data/derived/trader_sheets/**
             data/derived/reports/**
             data/derived/baskets/**
+            data/derived/analysis/hypothesis_eval/**
             data/live/scoreboard.csv
             data/live/weeks_log.csv
           if-no-files-found: warn
-
 

@@ -142,11 +142,13 @@ def rescore_week(
         print("🔨 Rebuilding features from rep_enriched + candles...")
         raise NotImplementedError("rebuild_features not yet implemented")
     else:
-        # Try regime-namespaced features first (if present), then legacy
+        # Prefer canonical features (regime+schema), then older regime-only, then legacy flat
         candidates = [
-            output_base / "features_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet",
-            output_base / "features_weekly" / f"week_ending={week_end}" / "features_weekly.parquet",  # legacy fallback
-        ]
+            output_base / "features_weekly" / f"regime={regime}" / f"schema={schema_id}" / f"week_ending={week_end}" / "features_weekly.parquet",
+            output_base / "features_weekly" / f"regime={regime}" / f"week_ending={week_end}" / "features_weekly.parquet",  # older regime-only
+            output_base / "features_weekly" / f"week_ending={week_end}" / "features_weekly.parquet",  # legacy flat
+        ]                  
+
         print("   Feature candidates:")
         for p in candidates:
             print(f"     - {p} {'(FOUND)' if p.exists() else ''}")

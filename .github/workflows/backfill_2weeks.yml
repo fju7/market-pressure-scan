@@ -84,11 +84,11 @@ jobs:
           set -euxo pipefail
           WEEK="${{ inputs.week_end_1 }}"
           echo "=== Running week_end=${WEEK} ==="
-
-          # ✅ satisfy week_end mismatch guard
           echo "${WEEK}" > week_end.txt
           echo "week_end.txt now:"
           cat week_end.txt
+
+          test "$(cat week_end.txt)" = "${WEEK}"
 
           FORCE_FLAG=""
           if [[ "${{ inputs.force }}" == "true" ]]; then
@@ -119,6 +119,20 @@ jobs:
             data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
             data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_1 }}/
             data/derived/reports/week_ending=${{ inputs.week_end_1 }}/
+            
+      - name: Clean derived artifacts for week_end_2
+        shell: bash
+        run: |
+          set -euxo pipefail
+          WEEK="${{ inputs.week_end_2 }}"
+          echo "🧹 Cleaning derived artifacts for ${WEEK}"
+          rm -rf \
+            data/derived/rep_enriched/week_ending=${WEEK} \
+            data/derived/features_weekly/**/week_ending=${WEEK} \
+            data/derived/scores_weekly/**/week_ending=${WEEK} \
+            data/derived/reports/week_ending=${WEEK} \
+            data/derived/baskets/week_ending=${WEEK} \
+            data/derived/trader_sheets/week_ending=${WEEK}
 
       - name: Run weekly pipeline (week_end_2)
         shell: bash
@@ -131,6 +145,8 @@ jobs:
           echo "${WEEK}" > week_end.txt
           echo "week_end.txt now:"
           cat week_end.txt
+          
+          test "$(cat week_end.txt)" = "${WEEK}"
 
           FORCE_FLAG=""
           if [[ "${{ inputs.force }}" == "true" ]]; then
@@ -142,7 +158,7 @@ jobs:
             --universe "${{ inputs.universe }}" \
             --regime "${{ inputs.regime }}" \
             --schema "${{ inputs.schema }}" \
-            --from_stage "${{ inputs.from_stage }}" \
+            --from_stage "news" \
             ${FORCE_FLAG}
 
           echo "=== Verify expected artifacts exist for ${WEEK} ==="
@@ -176,4 +192,3 @@ jobs:
             data/derived/rep_enriched/week_ending=${{ inputs.week_end_2 }}/
             data/derived/features_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
             data/derived/scores_weekly/regime=${{ inputs.regime }}/schema=${{ inputs.schema }}/week_ending=${{ inputs.week_end_2 }}/
-

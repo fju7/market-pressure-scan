@@ -1,14 +1,24 @@
 """
 Ingest daily market candles for universe + SPY using Finnhub API.
-Stores results in data/derived/market_daily/candles_daily.parquet
+
+Behavior:
+- If candles store does NOT exist: build a 90-day history ending at week_end.
+- If candles store exists and --force is NOT set: fetch ONLY missing dates from
+  (existing max_date + 1) through week_end, then upsert + dedupe.
+- If --force is set: rebuild a 90-day history ending at week_end (replace store).
+
+Store path:
+  data/derived/market_daily/candles_daily.parquet
 """
 
+from __future__ import annotations
+
 import argparse
-from .reuse import should_skip
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -16,180 +26,187 @@ import requests
 from src.io_atomic import write_parquet_atomic
 
 
+STORE_DIR = Path("data/derived/market_daily")
+STORE_PATH = STORE_DIR / "candles_daily.parquet"
+
+
+def _as_date(x) -> date:
+    return pd.to_datetime(x).date()
+
+
 def fetch_candles(symbol: str, from_ts: int, to_ts: int, api_key: str, max_retries: int = 3) -> pd.DataFrame:
     """Fetch daily candles from Finnhub API with retry logic for 429 errors."""
     url = "https://finnhub.io/api/v1/stock/candle"
     headers = {"X-Finnhub-Token": api_key}
-    params = {
-        "symbol": symbol,
-        "resolution": "D",
-        "from": from_ts,
-        "to": to_ts
-    }
-    
+    params = {"symbol": symbol, "resolution": "D", "from": from_ts, "to": to_ts}
+
     for attempt in range(max_retries):
-        try:
-            response = requests.get(url, headers=headers, params=params)
-            
-            # Handle 429 rate limit with exponential backoff
-            if response.status_code == 429:
-                wait_time = 60 * (2 ** attempt)  # 60s, 120s, 240s
-                print(f"⚠ Rate limited (429), waiting {wait_time}s...")
-                time.sleep(wait_time)
-                continue
-            
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            if data.get("s") == "no_data":
-                return pd.DataFrame()
-            
-            if data.get("s") != "ok":
-                print(f"  ⚠ Error for {symbol}: {data}")
-                return pd.DataFrame()
-            
-            df = pd.DataFrame({
+        response = requests.get(url, headers=headers, params=params)
+
+        if response.status_code == 429:
+            wait_time = 60 * (2 ** attempt)  # 60s, 120s, 240s
+            print(f"⚠ Rate limited (429), waiting {wait_time}s...")
+            time.sleep(wait_time)
+            continue
+
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get("s") == "no_data":
+            return pd.DataFrame()
+
+        if data.get("s") != "ok":
+            print(f"  ⚠ Error for {symbol}: {data}")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(
+            {
                 "symbol": symbol,
-                "date": pd.to_datetime(data["t"], unit="s").date,
-                "o": data["o"],
-                "h": data["h"],
-                "l": data["l"],
-                "c": data["c"],
-                "v": data["v"]
-            })
-            
-            return df
-            
-        except requests.exceptions.HTTPError as e:
-            if attempt == max_retries - 1:
-                raise
-            print(f"  ⚠ HTTP error (attempt {attempt+1}/{max_retries}): {e}")
-            time.sleep(5 * (attempt + 1))
-    
+                "date": pd.to_datetime(data["t"], unit="s"),
+                "open": data["o"],
+                "high": data["h"],
+                "low": data["l"],
+                "close": data["c"],
+                "volume": data["v"],
+            }
+        )
+        return df
+
     return pd.DataFrame()
+
+
+def _load_existing_store(path: Path) -> Optional[pd.DataFrame]:
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path)
+    # normalize
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def _verify_candles(df: pd.DataFrame, expected_min: date, expected_max: date) -> None:
+    print("\n🔍 Verifying candle integrity...")
+
+    dup_count = df.duplicated(subset=["symbol", "date"]).sum()
+    if dup_count > 0:
+        raise RuntimeError(f"❌ Found {dup_count} duplicate (symbol, date) pairs!")
+    print("   ✓ No duplicates on (symbol, date)")
+
+    ohlcv_cols = ["open", "high", "low", "close", "volume"]
+    missing_cols = [c for c in ohlcv_cols if c not in df.columns]
+    if missing_cols:
+        raise RuntimeError(f"❌ Missing OHLCV columns: {missing_cols}")
+
+    null_counts = df[ohlcv_cols].isnull().sum()
+    if null_counts.any():
+        raise RuntimeError(f"❌ Null values found in OHLCV: {null_counts[null_counts > 0].to_dict()}")
+    print("   ✓ No null OHLCV values")
+
+    min_date = pd.to_datetime(df["date"]).min().date()
+    max_date = pd.to_datetime(df["date"]).max().date()
+
+    if min_date > expected_min or max_date < expected_max:
+        print(f"   ⚠️  Date range warning: expected [{expected_min}, {expected_max}] got [{min_date}, {max_date}]")
+    else:
+        print("   ✓ Date range covers requested window")
+
+    print("✅ Candle integrity verified")
 
 
 def main(universe_path: str, week_end: str, force: bool = False):
     api_key = os.environ.get("FINNHUB_API_KEY")
     if not api_key:
         raise ValueError("FINNHUB_API_KEY environment variable not set")
-    
-    # Parse week_end and determine date range
+
     week_end_date = datetime.strptime(week_end, "%Y-%m-%d").date()
-    
-    # Fetch data for last 90 days (enough for weekly analysis)
-    from_date = week_end_date - timedelta(days=90)
-    to_date = week_end_date
-    
-    from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
-    to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
-    
-    # Load universe
+
+    # universe symbols
     universe_df = pd.read_csv(universe_path)
-    
     if "symbol" not in universe_df.columns:
         raise ValueError(f"Universe file must have 'symbol' column: {universe_path}")
-    
-    symbols = list(universe_df["symbol"].unique())
-    
-    # Always include SPY for baseline
+
+    symbols = (
+        universe_df["symbol"].astype(str).str.upper().str.strip().dropna().unique().tolist()
+    )
     if "SPY" not in symbols:
         symbols.append("SPY")
-    
+
+    STORE_DIR.mkdir(parents=True, exist_ok=True)
+
+    existing = _load_existing_store(STORE_PATH)
+
+    if force or existing is None or existing.empty:
+        # rebuild 90d ending week_end
+        from_date = week_end_date - timedelta(days=90)
+        to_date = week_end_date
+        mode = "FULL (90d rebuild)"
+    else:
+        # incremental from (existing max + 1) to week_end
+        existing_max = pd.to_datetime(existing["date"]).max().date()
+        from_date = existing_max + timedelta(days=1)
+        to_date = week_end_date
+        mode = "INCREMENTAL"
+
+        if from_date > to_date:
+            print(f"✅ Candles already up-to-date: existing_max={existing_max} >= week_end={week_end_date}")
+            print(f"Store: {STORE_PATH}")
+            return
+
+    from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+    to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+
+    print(f"\n📊 Candle ingest mode: {mode}")
     print(f"📊 Fetching candles for {len(symbols)} symbols from {from_date} to {to_date}")
-    print(f"   Rate limit: ~1 call/second (60 calls/min for Finnhub free tier)\n")
-    
+    print("   Rate limit: ~1 call/second (Finnhub free tier)\n")
+
     all_candles = []
-    
+
     for i, symbol in enumerate(symbols, 1):
         print(f"  [{i}/{len(symbols)}] {symbol}...", end=" ")
-        
         try:
             df = fetch_candles(symbol, from_ts, to_ts, api_key)
             if not df.empty:
                 all_candles.append(df)
                 print(f"✓ {len(df)} bars")
             else:
-                print("(skipped)")
-            
-            # Rate limit: Finnhub free tier is 60 calls/min = 1 call/sec
-            # Use 1.1s to be safe and avoid bursts hitting the limit
-            time.sleep(1.1)
-                
+                print("(no_data)")
+
+            time.sleep(1.1)  # avoid Finnhub bursts
         except Exception as e:
             print(f"✗ Error: {e}")
             continue
-    
-    if not all_candles:
-        raise RuntimeError("No candle data fetched")
-    
-    # Combine all data
-    combined = pd.concat(all_candles, ignore_index=True)
-    
-    # Normalize Finnhub OHLCV column names to canonical names
-    rename_map = {"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
-    combined = combined.rename(columns=rename_map)
-    
-    # Ensure date is datetime for parquet
-    combined["date"] = pd.to_datetime(combined["date"])
-    
-    # Sort by symbol and date
-    combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
-    
-    # Pre-write verification (invariants check)
-    print("\n🔍 Verifying candle integrity...")
-    
-    # Check 1: No duplicates on (symbol, date)
-    dup_count = combined.duplicated(subset=["symbol", "date"]).sum()
-    if dup_count > 0:
-        raise RuntimeError(f"❌ Found {dup_count} duplicate (symbol, date) pairs!")
-    print("   ✓ No duplicates on (symbol, date)")
-    
-    # Check 2: No null OHLCV values
-    ohlcv_cols = ["open", "high", "low", "close", "volume"]
-    if not set(ohlcv_cols).issubset(combined.columns):
-        raise RuntimeError(f"❌ Missing OHLCV columns. Expected {ohlcv_cols}, found: {list(combined.columns)}")
-    
-    null_counts = combined[ohlcv_cols].isnull().sum()
-    if null_counts.any():
-        raise RuntimeError(f"❌ Null values found in OHLCV: {null_counts[null_counts > 0].to_dict()}")
-    print("   ✓ No null OHLCV values")
-    
-    # Check 3: Date range includes requested window
-    min_date = combined["date"].min()
-    max_date = combined["date"].max()
-    expected_min = pd.to_datetime(from_date)
-    expected_max = pd.to_datetime(to_date)
-    
-    if min_date > expected_min or max_date < expected_max:
-        print(f"   ⚠️  Date range warning: expected {expected_min} to {expected_max}, got {min_date} to {max_date}")
+
+    new_rows = pd.concat(all_candles, ignore_index=True) if all_candles else pd.DataFrame()
+
+    if existing is None or existing.empty or force:
+        combined = new_rows
     else:
-        print(f"   ✓ Date range covers requested window")
-    
-    print("✅ Candle integrity verified")
-    
-    # Save to parquet (atomic write to prevent corruption)
-    output_dir = Path("data/derived/market_daily")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "candles_daily.parquet"
+        combined = pd.concat([existing, new_rows], ignore_index=True)
 
-    if should_skip(output_path, force):
-        print(f"SKIP: {output_path} exists and --force not set.")
-        return
+    if combined.empty:
+        raise RuntimeError("No candle data available after ingest")
 
-    write_parquet_atomic(combined, output_path)
+    combined["symbol"] = combined["symbol"].astype(str).str.upper().str.strip()
+    combined["date"] = pd.to_datetime(combined["date"])
+    combined = combined.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last").reset_index(drop=True)
 
-    print(f"\n✓ Saved {len(combined):,} candle records to {output_path}")
+    expected_min = from_date if (existing is None or force) else min(pd.to_datetime(existing["date"]).min().date(), from_date)
+    expected_max = to_date
+    _verify_candles(combined, expected_min=expected_min, expected_max=expected_max)
+
+    write_parquet_atomic(combined, STORE_PATH)
+
+    print(f"\n✓ Saved {len(combined):,} candle records to {STORE_PATH}")
     print(f"   Symbols: {combined['symbol'].nunique()}")
     print(f"   Date range: {combined['date'].min()} to {combined['date'].max()}")
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser("Ingest market candles from Finnhub")
+    ap = argparse.ArgumentParser("Ingest market candles from Finnhub (incremental)")
     ap.add_argument("--universe", required=True, help="Path to universe CSV with 'symbol' column")
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
-    ap.add_argument("--force", action="store_true", help="Rebuild even if output exists")
+    ap.add_argument("--force", action="store_true", help="Rebuild 90d history ending at week_end")
     args = ap.parse_args()
 
     main(args.universe, args.week_end, force=args.force)
