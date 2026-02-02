@@ -404,34 +404,41 @@ def build_news_feature_panel(
         )
     )
 
-    hist_by_week = (
-        df_hist.groupby(["week_ending_date", "symbol"], as_index=False)
-        .agg(
-            # weekly dedup clusters = unique cluster_ids that week
-            count_week=("cluster_id", "nunique")
-        )
-        .sort_values(["symbol", "week_ending_date"])
-    )
+          # ---- history rollups (prior weeks) ----
+      # df_hist can be completely empty (and sometimes columnless) if no prior score/history
+      # weeks were found (e.g., mismatched Thu vs Fri week_end naming).
+      need_cols = {"week_ending_date", "symbol", "cluster_id"}
+      if df_hist is None or df_hist.empty or not need_cols.issubset(set(df_hist.columns)):
+          hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
+      else:
+          hist_by_week = (
+              df_hist.groupby(["week_ending_date", "symbol"], as_index=False)
+              .agg(
+                  # weekly dedup clusters = unique cluster_ids that week
+                  count_week=("cluster_id", "nunique")
+              )
+              .sort_values(["symbol", "week_ending_date"])
+          )
 
-    def add_roll(g: pd.DataFrame) -> pd.DataFrame:
-        g = g.sort_values("week_ending_date")
-        g["count_20d_dedup"] = g["count_week"].rolling(window=4, min_periods=1).sum()
-        g["count_60d_dedup"] = g["count_week"].rolling(window=12, min_periods=1).sum()
-        return g
+          def add_roll(g: pd.DataFrame) -> pd.DataFrame:
+              g = g.sort_values("week_ending_date")
+              g["count_20d_dedup"] = g["count_week"].rolling(window=4, min_periods=1).sum()
+              g["count_60d_dedup"] = g["count_week"].rolling(window=12, min_periods=1).sum()
+              return g
 
-    if not hist_by_week.empty:
-        hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
+          if not hist_by_week.empty:
+              hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
 
-        # If pandas suggestion or version puts symbol into the index, recover it
-        if "symbol" not in hist_by_week.columns:
-            hist_by_week = hist_by_week.reset_index()
+              # If pandas suggestion or version puts symbol into the index, recover it
+              if "symbol" not in hist_by_week.columns:
+                  hist_by_week = hist_by_week.reset_index()
 
-        hist_latest = (
-            hist_by_week.groupby("symbol", as_index=False)
-            .tail(1)[["symbol", "count_20d_dedup", "count_60d_dedup"]]
-        )
-    else:
-        hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
+              hist_latest = (
+                  hist_by_week.groupby("symbol", as_index=False)
+                  .tail(1)[["symbol", "count_20d_dedup", "count_60d_dedup"]]
+              )
+          else:
+              hist_latest = pd.DataFrame(columns=["symbol", "count_20d_dedup", "count_60d_dedup"])
 
     cur = cur_counts.merge(hist_latest, on="symbol", how="left")
 
