@@ -422,7 +422,12 @@ def build_news_feature_panel(
         )
 
         def add_roll(g: pd.DataFrame) -> pd.DataFrame:
-            g = g.sort_values("week_ending_date")
+            g = g.sort_values("week_ending_date").copy()
+
+            # Ensure symbol is always a real column (even if pandas removed it)
+            if "symbol" not in g.columns:
+                g["symbol"] = g.name  # group key
+
             g["count_20d_dedup"] = g["count_week"].rolling(window=4, min_periods=1).sum()
             g["count_60d_dedup"] = g["count_week"].rolling(window=12, min_periods=1).sum()
             return g
@@ -430,10 +435,17 @@ def build_news_feature_panel(
         if not hist_by_week.empty:
             hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
 
-            # If pandas suggestion or version puts symbol into the index, recover it
-            if "symbol" not in hist_by_week.columns:
-                hist_by_week = hist_by_week.reset_index()
+            # Flatten any index created by groupby/apply so group keys don't get stuck in unnamed levels
+            hist_by_week = hist_by_week.reset_index(drop=True)
 
+            # Some pandas versions emit group key columns as level_0 / index when resetting;
+            # normalize back to 'symbol' if needed.
+            if "symbol" not in hist_by_week.columns:
+                if "level_0" in hist_by_week.columns:
+                    hist_by_week = hist_by_week.rename(columns={"level_0": "symbol"})
+                elif "index" in hist_by_week.columns:
+                    hist_by_week = hist_by_week.rename(columns={"index": "symbol"})
+                    
             hist_latest = (
                 hist_by_week.groupby("symbol", as_index=False)
                 .tail(1)[["symbol", "count_20d_dedup", "count_60d_dedup"]]
