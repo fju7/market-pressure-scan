@@ -404,7 +404,7 @@ def build_news_feature_panel(
         )
     )
 
-         # ---- history rollups (prior weeks) ----
+    # ---- history rollups (prior weeks) ----
     # df_hist can be completely empty (and sometimes columnless) if no prior score/history
     # weeks were found (e.g., mismatched Thu vs Fri week_end naming).
     need_cols = {"week_ending_date", "symbol", "cluster_id"}
