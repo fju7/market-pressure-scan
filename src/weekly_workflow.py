@@ -9,7 +9,37 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+
 from pathlib import Path
+import pandas as pd
+
+import pandas as pd
+
+def compute_auto_week_end_from_candles(candles_path: Path) -> str:
+    """
+    Returns last completed trading week end (last trading day in the last completed Mon–Fri window),
+    based on candles_daily.parquet dates.
+    """
+    if not candles_path.exists():
+        raise SystemExit(f"❌ candles file not found for auto week_end: {candles_path}")
+
+    candles = pd.read_parquet(candles_path, columns=["date"])
+    dmax = pd.to_datetime(candles["date"]).max().normalize()
+
+    # If max candle is Mon-Thu, the current week is not complete yet → use previous week's window
+    ref = dmax
+    if int(ref.dayofweek) < 4:
+        ref = ref - pd.Timedelta(days=7)
+
+    mon = ref - pd.Timedelta(days=int(ref.dayofweek))
+    fri = mon + pd.Timedelta(days=4)
+
+    dates = pd.to_datetime(candles["date"]).dt.normalize()
+    wdays = dates[(dates >= mon) & (dates <= fri)]
+    if wdays.empty:
+        raise SystemExit(f"❌ Could not find candle dates for week window {mon.date()}..{fri.date()}")
+
+    return wdays.max().strftime("%Y-%m-%d")
 
 
 def run_command(cmd: list[str], description: str):
@@ -67,7 +97,7 @@ ANYTIME - Performance Analysis:
         """
     )
     
-    ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
+    ap.add_argument("--week_end", default="auto", help="Week ending date YYYY-MM-DD (or 'auto')")
     ap.add_argument(
         "--mode",
         required=True,
@@ -79,6 +109,11 @@ ANYTIME - Performance Analysis:
     ap.add_argument("--max_clusters_per_symbol", type=int, default=1)
     
     args = ap.parse_args()
+
+    if args.week_end == "auto":
+        candles_path = Path("data/derived/market_daily/candles_daily.parquet")
+        args.week_end = compute_auto_week_end_from_candles(candles_path)
+        print(f"\n🗓️  auto week_end resolved to: {args.week_end} (from {candles_path})")
     
     py = sys.executable
     
