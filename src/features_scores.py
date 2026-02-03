@@ -366,16 +366,12 @@ def build_news_feature_panel(
     )
 
     # split current week vs history
-    week_end_ts = pd.to_datetime(week_end).normalize()
-    df_cur = df[df["week_ending_date"] == week_end_ts].copy()
-    df_hist = df[df["week_ending_date"] != week_end_ts].copy()
-
     # --- normalize symbol column (defensive) ---
+    # Ensure we have a real 'symbol' column BEFORE we split / groupby.
     if "symbol" not in df.columns:
         # common case: symbol was saved as index
         if getattr(df.index, "name", None) == "symbol":
             df = df.reset_index()
-    # common alternate naming
         elif "ticker" in df.columns:
             df = df.rename(columns={"ticker": "symbol"})
         elif "Symbol" in df.columns:
@@ -385,7 +381,16 @@ def build_news_feature_panel(
                 f"Missing 'symbol' column in rep_enriched. "
                 f"cols={list(df.columns)} index_name={df.index.name}"
             )
+
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+
+    # split current week vs history
+    week_end_ts = pd.to_datetime(week_end).normalize()
+    df_cur = df[df["week_ending_date"] == week_end_ts].copy()
+    df_hist = df[df["week_ending_date"] != week_end_ts].copy()
+
     if df_cur.empty:
+
         raise ValueError(
             f"rep_enriched has no rows for week_end={week_end_ts.date()}. "
             f"Available weeks: {sorted(df['week_ending_date'].dt.date.unique().tolist())}"
