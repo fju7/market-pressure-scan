@@ -423,18 +423,19 @@ def build_news_feature_panel(
 
         def add_roll(g: pd.DataFrame) -> pd.DataFrame:
             g = g.sort_values("week_ending_date").copy()
-
-            # Ensure symbol is always a real column (even if pandas removed it)
-            if "symbol" not in g.columns:
-                g["symbol"] = g.name  # group key
-
             g["count_20d_dedup"] = g["count_week"].rolling(window=4, min_periods=1).sum()
             g["count_60d_dedup"] = g["count_week"].rolling(window=12, min_periods=1).sum()
             return g
 
         if not hist_by_week.empty:
-            hist_by_week = hist_by_week.groupby("symbol", group_keys=False).apply(add_roll)
-
+            parts = []
+            for sym, g in hist_by_week.groupby("symbol", sort=False):
+                g2 = add_roll(g)
+                # guarantee symbol column exists and is correct
+                g2["symbol"] = sym
+                parts.append(g2)
+            hist_by_week = pd.concat(parts, ignore_index=True) if parts else hist_by_week.iloc[0:0].copy()
+            
             # Flatten any index created by groupby/apply so group keys don't get stuck in unnamed levels
             hist_by_week = hist_by_week.reset_index(drop=True)
 
