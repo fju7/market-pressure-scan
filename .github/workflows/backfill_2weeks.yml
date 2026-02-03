@@ -130,15 +130,22 @@ jobs:
         run: |
           set -euxo pipefail
           WEEK="${{ inputs.week_end_2 }}"
-          echo "🧹 Cleaning derived artifacts for ${WEEK}"
-          rm -rf \
-            data/derived/rep_enriched/week_ending=${WEEK} \
-            data/derived/features_weekly/**/week_ending=${WEEK} \
-            data/derived/scores_weekly/**/week_ending=${WEEK} \
-            data/derived/reports/week_ending=${WEEK} \
-            data/derived/baskets/week_ending=${WEEK} \
-            data/derived/trader_sheets/week_ending=${WEEK}
+          KEEP="${{ inputs.week_end_1 }}"
+          echo "Keeping only week_ending=${KEEP} artifacts; cleaning others."
 
+          # rep_enriched
+          find data/derived/rep_enriched -maxdepth 1 -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} +
+
+          # news_clusters
+          find data/derived/news_clusters -maxdepth 1 -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} +
+
+          # features_weekly + scores_weekly + reports + baskets + trader_sheets
+          find data/derived/features_weekly -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} + || true
+          find data/derived/scores_weekly   -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} + || true
+          find data/derived/reports -maxdepth 1 -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} + || true
+          find data/derived/baskets -maxdepth 1 -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} + || true
+          find data/derived/trader_sheets -maxdepth 1 -type d -name "week_ending=*" ! -name "week_ending=${KEEP}" -exec rm -rf {} + || true    
+           
       - name: Run weekly pipeline (week_end_2)
         shell: bash
         run: |
@@ -163,7 +170,7 @@ jobs:
             --universe "${{ inputs.universe }}" \
             --regime "${{ inputs.regime }}" \
             --schema "${{ inputs.schema }}" \
-            --from_stage "news" \
+            --from_stage "${{inputs.from_stage }}" \
             ${FORCE_FLAG}
 
           echo "=== Verify expected artifacts exist for ${WEEK} ==="
