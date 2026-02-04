@@ -24,3 +24,4 @@ week_end.txt
 
 # Generated / local artifacts
 data/live/
+src/ingest_market_candles.py.bak
