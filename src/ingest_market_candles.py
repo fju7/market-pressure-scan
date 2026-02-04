@@ -5,7 +5,8 @@ Behavior:
 - If candles store does NOT exist: build a 90-day history ending at week_end.
 - If candles store exists and --force is NOT set: fetch ONLY missing dates from
   (existing max_date + 1) through week_end, then upsert + dedupe.
-- If --force is set: rebuild a 90-day history ending at week_end (replace store).
+- If --force is set: refetch a 90-day window ending at week_end and MERGE into store (safe).
+- Use --replace_store for a destructive 90-day rebuild that replaces the store.
 
 Store path:
   data/derived/market_daily/candles_daily.parquet
@@ -114,7 +115,7 @@ def _verify_candles(df: pd.DataFrame, expected_min: date, expected_max: date) ->
     print("✅ Candle integrity verified")
 
 
-def main(universe_path: str, week_end: str, force: bool = False):
+def main(universe_path: str, week_end: str, force: bool = False, replace_store: bool = False):
     api_key = os.environ.get("FINNHUB_API_KEY")
     if not api_key:
         raise ValueError("FINNHUB_API_KEY environment variable not set")
@@ -136,17 +137,24 @@ def main(universe_path: str, week_end: str, force: bool = False):
 
     existing = _load_existing_store(STORE_PATH)
 
-    if force or existing is None or existing.empty:
-        # rebuild 90d ending week_end
+    if existing is None or existing.empty:
+        # no store yet -> build 90d ending week_end
         from_date = week_end_date - timedelta(days=90)
         to_date = week_end_date
-        mode = "FULL (90d rebuild)"
+        mode = "FULL (90d bootstrap)"
     else:
-        # incremental from (existing max + 1) to week_end
         existing_max = pd.to_datetime(existing["date"]).max().date()
-        from_date = existing_max + timedelta(days=1)
-        to_date = week_end_date
-        mode = "INCREMENTAL"
+
+        if force:
+            # IMPORTANT: force must NOT shrink history. We refetch 90d window and merge.
+            from_date = week_end_date - timedelta(days=90)
+            to_date = week_end_date
+            mode = "REFETCH (90d merge)"
+        else:
+            # incremental from (existing max + 1) to week_end
+            from_date = existing_max + timedelta(days=1)
+            to_date = week_end_date
+            mode = "INCREMENTAL"
 
         if from_date > to_date:
             print(f"✅ Candles already up-to-date: existing_max={existing_max} >= week_end={week_end_date}")
@@ -179,11 +187,13 @@ def main(universe_path: str, week_end: str, force: bool = False):
 
     new_rows = pd.concat(all_candles, ignore_index=True) if all_candles else pd.DataFrame()
 
-    if existing is None or existing.empty or force:
+    if existing is None or existing.empty:
         combined = new_rows
     else:
-        combined = pd.concat([existing, new_rows], ignore_index=True)
-
+        if replace_store:
+            combined = new_rows
+        else:
+            combined = pd.concat([existing, new_rows], ignore_index=True)
     if combined.empty:
         raise RuntimeError("No candle data available after ingest")
 
@@ -191,7 +201,22 @@ def main(universe_path: str, week_end: str, force: bool = False):
     combined["date"] = pd.to_datetime(combined["date"])
     combined = combined.sort_values(["symbol", "date"]).drop_duplicates(subset=["symbol", "date"], keep="last").reset_index(drop=True)
 
-    expected_min = from_date if (existing is None or force) else min(pd.to_datetime(existing["date"]).min().date(), from_date)
+    # Guardrail: never shrink history unless explicitly replacing store
+    if existing is not None and not existing.empty and not replace_store:
+        old_min = pd.to_datetime(existing["date"]).min().date()
+        old_max = pd.to_datetime(existing["date"]).max().date()
+        new_min = pd.to_datetime(combined["date"]).min().date()
+        new_max = pd.to_datetime(combined["date"]).max().date()
+        if new_min > old_min:
+            raise RuntimeError(
+                f"❌ Refusing to shrink candles store: old_min={old_min} new_min={new_min}. Use --replace_store to override."
+            )
+        if new_max < old_max:
+            raise RuntimeError(
+                f"❌ Refusing to shrink candles store: old_max={old_max} new_max={new_max}. Use --replace_store to override."
+            )
+
+    expected_min = from_date if (existing is None or existing.empty or replace_store) else min(pd.to_datetime(existing["date"]).min().date(), from_date)
     expected_max = to_date
     _verify_candles(combined, expected_min=expected_min, expected_max=expected_max)
 
@@ -206,7 +231,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser("Ingest market candles from Finnhub (incremental)")
     ap.add_argument("--universe", required=True, help="Path to universe CSV with 'symbol' column")
     ap.add_argument("--week_end", required=True, help="Week ending date YYYY-MM-DD")
-    ap.add_argument("--force", action="store_true", help="Rebuild 90d history ending at week_end")
+    ap.add_argument("--force", action="store_true", help="Refetch last 90d ending at week_end and MERGE into store (safe)")
+    ap.add_argument("--replace_store", action="store_true", help="DESTRUCTIVE: replace store with 90d history ending at week_end")
     args = ap.parse_args()
 
-    main(args.universe, args.week_end, force=args.force)
+    main(args.universe, args.week_end, force=args.force, replace_store=args.replace_store)
