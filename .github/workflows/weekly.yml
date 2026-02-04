@@ -21,7 +21,8 @@ jobs:
     env:
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
+      MARKET_CANDLES_CACHE_VERSION: v1
+      
     outputs:
       week_end: ${{ steps.week_end.outputs.week_end }}
     permissions:
@@ -109,12 +110,18 @@ jobs:
           echo "WEEK_END=$WEEK_END" >> "$GITHUB_ENV"
           echo "✓ Week ending: $WEEK_END"
 
-      - name: Cache market candles
+      - name: Cache market candles (restore latest; save updated)
+        id: cache-market
         uses: actions/cache@v4
         with:
           path: data/derived/market_daily
-          key: market-daily-${{ runner.os }}-v1
-          
+          key: market-daily-${{ runner.os }}-${{ env.MARKET_CANDLES_CACHE_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            market-daily-${{ runner.os }}-${{ env.MARKET_CANDLES_CACHE_VERSION }}-
+
+      - name: Cache status (market_daily)
+        run: echo "market_daily cache-hit=${{ steps.cache-market.outputs.cache-hit }}"
+   
       - name: Ingest market candles (required for scoring)
         run: |
           set -euo pipefail

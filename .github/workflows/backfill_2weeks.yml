@@ -49,6 +49,7 @@ jobs:
       FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       PYTHONUNBUFFERED: "1"
+      MARKET_CANDLES_CACHE_VERSION: v1
 
     steps:
       - name: Checkout
@@ -63,6 +64,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Cache market candles (restore latest; save updated)
+        id: cache-market
+        uses: actions/cache@v4
+        with:
+          path: data/derived/market_daily
+          key: market-daily-${{ runner.os }}-${{ env.MARKET_CANDLES_CACHE_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            market-daily-${{ runner.os }}-${{ env.MARKET_CANDLES_CACHE_VERSION }}-
+
+      - name: Cache status (market_daily)
+        run: echo "market_daily cache-hit=${{ steps.cache-market.outputs.cache-hit }}"
+
 
       - name: Python syntax check
         run: |
