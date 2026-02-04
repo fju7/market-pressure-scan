@@ -31,6 +31,7 @@ def skip_or_run(label: str, out_path: Path, force: bool, cmd: list[str]):
 import argparse
 import subprocess
 import sys
+import os
 from pathlib import Path
 import pandas as pd
 from datetime import datetime
@@ -131,20 +132,30 @@ def main():
     )
     args = ap.parse_args()
 
-    # CRITICAL: Validate against week_end.txt (single source of truth)
+    # CRITICAL GUARD (CI): prevent cross-week artifact contamination.
+    # Local/backfill: --week_end is source of truth; we auto-align week_end.txt.
     week_end_file = Path("week_end.txt")
+    is_ci = (os.environ.get("GITHUB_ACTIONS", "").lower() == "true") or (os.environ.get("CI", "").lower() == "true")
+
     if week_end_file.exists():
         week_end_from_file = week_end_file.read_text().strip()
         if week_end_from_file != args.week_end:
-            print(f"❌ CRITICAL ERROR: week_end mismatch!")
-            print(f"   week_end.txt:   {week_end_from_file}")
-            print(f"   --week_end arg: {args.week_end}")
-            print(f"   These must match to prevent artifact contamination.")
-            sys.exit(1)
-        print(f"✓ week_end validation passed: {args.week_end}")
+            if is_ci:
+                print(f"❌ CRITICAL ERROR: week_end mismatch (CI guard)!")
+                print(f"   week_end.txt:   {week_end_from_file}")
+                print(f"   --week_end arg: {args.week_end}")
+                print(f"   Refusing to run to prevent artifact contamination.")
+                sys.exit(1)
+            else:
+                print(f"⚠️  week_end.txt mismatch (local/backfill). Auto-aligning.")
+                print(f"   week_end.txt was: {week_end_from_file}")
+                print(f"   setting to:      {args.week_end}")
+                week_end_file.write_text(args.week_end + "\n")
+        else:
+            print(f"✓ week_end validation passed: {args.week_end}")
     else:
-        print(f"⚠️  Warning: week_end.txt not found (local run?)")
-        print(f"   Proceeding with --week_end={args.week_end}")
+        print(f"⚠️  week_end.txt not found. Creating with --week_end={args.week_end}")
+        week_end_file.write_text(args.week_end + "\n")
 
     # Validate config
     config.validate_config()
