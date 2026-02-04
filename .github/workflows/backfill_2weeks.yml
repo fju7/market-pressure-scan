@@ -1,4 +1,5 @@
 name: Backfill (2 weeks)
+run-name: "backfill-2w ${{ inputs.week_end_1 }}_${{ inputs.week_end_2 }} regime=${{ inputs.regime }} schema=${{ inputs.schema }}"
 
 on:
   workflow_dispatch:
