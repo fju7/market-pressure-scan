@@ -193,7 +193,7 @@ for i in "${!PAIRS[@]}"; do
   wait_for_complete "$RUN_ID"
 
   echo "Downloading artifacts..."
-  "$DOWNLOAD_SCRIPT" "$TITLE"
+  "$DOWNLOAD_SCRIPT" "$TITLE" "$RUN_ID"
 
   echo
 done

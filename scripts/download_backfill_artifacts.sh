@@ -15,12 +15,22 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
-run_id_for_title() {
+run_id_for_title_success() {
   local title="$1"
   gh run list \
     --workflow "$WORKFLOW_FILE" \
-    --limit 50 \
-    --json databaseId,displayTitle \
+    --limit 80 \
+    --json databaseId,displayTitle,conclusion,createdAt,status \
+    -q ".[] | select(.displayTitle == \"$title\") | select(.conclusion == \"success\") | .databaseId" \
+  | head -n 1
+}
+
+run_id_for_title_any() {
+  local title="$1"
+  gh run list \
+    --workflow "$WORKFLOW_FILE" \
+    --limit 80 \
+    --json databaseId,displayTitle,conclusion,createdAt,status \
     -q ".[] | select(.displayTitle == \"$title\") | .databaseId" \
   | head -n 1
 }
@@ -64,8 +74,15 @@ usage() {
 
 [[ $# -ge 1 ]] || usage
 TITLE="$1"
+RUN_ID="${2:-}"
 
-RUN_ID="$(run_id_for_title "$TITLE")"
+if [[ -z "${RUN_ID:-}" ]]; then
+  RUN_ID="$(run_id_for_title_success "$TITLE" || true)"
+fi
+if [[ -z "${RUN_ID:-}" ]]; then
+  RUN_ID="$(run_id_for_title_any "$TITLE" || true)"
+fi
+
 if [[ -z "${RUN_ID:-}" ]]; then
   echo "ERROR: could not find run with title exactly:"
   echo "  $TITLE"
