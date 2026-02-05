@@ -73,6 +73,14 @@ find_run_id_after() {
   | head -n 1
 }
 
+# Find an active (pending/in_progress/queued) run matching the exact displayTitle.
+find_active_run_id() {
+  local title="$1"
+
+  gh run list     --workflow "$WORKFLOW_FILE"     --limit 60     --json databaseId,displayTitle,status     -q ".[] | select(.displayTitle == \"$title\") | select(.status == \"in_progress\" or .status == \"queued\" or .status == \"pending\") | .databaseId"   | head -n 1
+}
+
+
 wait_for_run_id() {
   local title="$1"
   local after_utc="$2"
@@ -84,7 +92,7 @@ wait_for_run_id() {
       echo "$run_id"
       return 0
     fi
-    echo "Waiting for run to appear in GitHub UI..."
+    echo "Waiting for run to appear in GitHub UI..." >&2
     sleep 10
   done
 
@@ -160,19 +168,26 @@ for i in "${!PAIRS[@]}"; do
   echo "Dispatching at (UTC): $DISPATCH_UTC"
   echo "Expected run-name/title: $TITLE"
 
-  gh workflow run "${WORKFLOW_FILE}" \
-    --ref "${REF}" \
-    -f week_end_1="${W1}" \
-    -f week_end_2="${W2}" \
-    -f regime="${REGIME}" \
-    -f schema="${SCHEMA}" \
-    -f universe="${UNIVERSE}" \
-    -f from_stage="${FROM_STAGE}" \
-    -f force="${FORCE}"
+  # If a run with this exact TITLE is already active, attach to it instead of dispatching a duplicate.
+  EXISTING_ID="$(find_active_run_id "$TITLE" || true)"
+  if [[ -n "${EXISTING_ID:-}" ]]; then
+    RUN_ID="$EXISTING_ID"
+    echo "Found existing active run_id: $RUN_ID (skipping dispatch)"
+  else
+    gh workflow run "${WORKFLOW_FILE}" \
+      --ref "${REF}" \
+      -f week_end_1="${W1}" \
+      -f week_end_2="${W2}" \
+      -f regime="${REGIME}" \
+      -f schema="${SCHEMA}" \
+      -f universe="${UNIVERSE}" \
+      -f from_stage="${FROM_STAGE}" \
+      -f force="${FORCE}"
 
-  echo "Submitted workflow dispatch. Locating run id..."
-  RUN_ID="$(wait_for_run_id "$TITLE" "$DISPATCH_UTC")"
-  echo "Found run_id: $RUN_ID"
+    echo "Submitted workflow dispatch. Locating run id..."
+    RUN_ID="$(wait_for_run_id "$TITLE" "$DISPATCH_UTC")"
+    echo "Found run_id: $RUN_ID"
+  fi
 
   echo "Waiting for completion..."
   wait_for_complete "$RUN_ID"

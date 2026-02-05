@@ -25,3 +25,7 @@ week_end.txt
 # Generated / local artifacts
 data/live/
 src/ingest_market_candles.py.bak
+
+# Local ops
+logs/
+scripts/schedule_backfill_14w.sh
