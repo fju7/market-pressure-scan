@@ -80,6 +80,14 @@ find_active_run_id() {
   gh run list     --workflow "$WORKFLOW_FILE"     --limit 60     --json databaseId,displayTitle,status     -q ".[] | select(.displayTitle == \"$title\") | select(.status == \"in_progress\" or .status == \"queued\" or .status == \"pending\") | .databaseId"   | head -n 1
 }
 
+# Find the newest SUCCESS completed run matching the exact displayTitle.
+find_success_run_id() {
+  local title="$1"
+
+  gh run list     --workflow "$WORKFLOW_FILE"     --limit 80     --json databaseId,displayTitle,status,conclusion,createdAt     -q ".[] | select(.displayTitle == \"$title\") | select(.status == \"completed\") | select(.conclusion == \"success\") | .databaseId"   | head -n 1
+}
+
+
 
 wait_for_run_id() {
   local title="$1"
@@ -168,25 +176,31 @@ for i in "${!PAIRS[@]}"; do
   echo "Dispatching at (UTC): $DISPATCH_UTC"
   echo "Expected run-name/title: $TITLE"
 
-  # If a run with this exact TITLE is already active, attach to it instead of dispatching a duplicate.
+  # Prefer: attach to active run -> reuse successful completed run -> otherwise dispatch.
   EXISTING_ID="$(find_active_run_id "$TITLE" || true)"
   if [[ -n "${EXISTING_ID:-}" ]]; then
     RUN_ID="$EXISTING_ID"
     echo "Found existing active run_id: $RUN_ID (skipping dispatch)"
   else
-    gh workflow run "${WORKFLOW_FILE}" \
-      --ref "${REF}" \
-      -f week_end_1="${W1}" \
-      -f week_end_2="${W2}" \
-      -f regime="${REGIME}" \
-      -f schema="${SCHEMA}" \
-      -f universe="${UNIVERSE}" \
-      -f from_stage="${FROM_STAGE}" \
-      -f force="${FORCE}"
+    SUCCESS_ID="$(find_success_run_id "$TITLE" || true)"
+    if [[ -n "${SUCCESS_ID:-}" ]]; then
+      RUN_ID="$SUCCESS_ID"
+      echo "Found existing successful run_id: $RUN_ID (skipping dispatch)"
+    else
+      gh workflow run "${WORKFLOW_FILE}" \
+        --ref "${REF}" \
+        -f week_end_1="${W1}" \
+        -f week_end_2="${W2}" \
+        -f regime="${REGIME}" \
+        -f schema="${SCHEMA}" \
+        -f universe="${UNIVERSE}" \
+        -f from_stage="${FROM_STAGE}" \
+        -f force="${FORCE}"
 
-    echo "Submitted workflow dispatch. Locating run id..."
-    RUN_ID="$(wait_for_run_id "$TITLE" "$DISPATCH_UTC")"
-    echo "Found run_id: $RUN_ID"
+      echo "Submitted workflow dispatch. Locating run id..."
+      RUN_ID="$(wait_for_run_id "$TITLE" "$DISPATCH_UTC")"
+      echo "Found run_id: $RUN_ID"
+    fi
   fi
 
   echo "Waiting for completion..."
