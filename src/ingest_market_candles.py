@@ -137,29 +137,36 @@ def main(universe_path: str, week_end: str, force: bool = False, replace_store: 
 
     existing = _load_existing_store(STORE_PATH)
 
-    if existing is None or existing.empty:
-        # no store yet -> build 90d ending week_end
+    # Decide fetch window
+    if replace_store:
+        # DESTRUCTIVE: rebuild 90-day window ending at week_end (ignore existing store range)
         from_date = week_end_date - timedelta(days=90)
         to_date = week_end_date
-        mode = "FULL (90d bootstrap)"
+        mode = "REPLACE_STORE (90d rebuild)"
     else:
-        existing_max = pd.to_datetime(existing["date"]).max().date()
-
-        if force:
-            # IMPORTANT: force must NOT shrink history. We refetch 90d window and merge.
+        if existing is None or existing.empty:
+            # no store yet -> build 90d ending week_end
             from_date = week_end_date - timedelta(days=90)
             to_date = week_end_date
-            mode = "REFETCH (90d merge)"
+            mode = "FULL (90d bootstrap)"
         else:
-            # incremental from (existing max + 1) to week_end
-            from_date = existing_max + timedelta(days=1)
-            to_date = week_end_date
-            mode = "INCREMENTAL"
+            existing_max = pd.to_datetime(existing["date"]).max().date()
 
-        if from_date > to_date:
-            print(f"✅ Candles already up-to-date: existing_max={existing_max} >= week_end={week_end_date}")
-            print(f"Store: {STORE_PATH}")
-            return
+            if force:
+                # IMPORTANT: force must NOT shrink history. We refetch 90d window and merge.
+                from_date = week_end_date - timedelta(days=90)
+                to_date = week_end_date
+                mode = "REFETCH (90d merge)"
+            else:
+                # incremental from (existing max + 1) to week_end
+                from_date = existing_max + timedelta(days=1)
+                to_date = week_end_date
+                mode = "INCREMENTAL"
+
+            if from_date > to_date:
+                print(f"✅ Candles already up-to-date: existing_max={existing_max} >= week_end={week_end_date}")
+                print(f"Store: {STORE_PATH}")
+                return
 
     from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
     to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
