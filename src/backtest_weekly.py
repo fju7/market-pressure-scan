@@ -81,6 +81,7 @@ def select_top_with_sector_cap(
     if score_col not in scores.columns:
         score_col = _pick_score_col(scores)
 
+
     s = scores.sort_values(score_col, ascending=False).copy()
 
     counts: Dict[str, int] = {}
@@ -231,6 +232,7 @@ def run_backtest(
     tc_roundtrip_bps: float = 30.0,
     out_dir: Optional[Path] = None,
     skip_missing_scores: bool = False,
+    min_regime_strength: Optional[float] = None,
 ):
     paths = default_paths(regime=regime, schema=schema, out_dir=out_dir)
     uni = load_universe(universe_csv)
@@ -277,6 +279,22 @@ def run_backtest(
                 scores.drop(columns=["sector_u"], inplace=True)
 
         score_col = _pick_score_col(scores)
+
+        # Check regime strength filter
+        if min_regime_strength is not None:
+            # Calculate regime strength (mean of top 10% of scores)
+            score_values = pd.to_numeric(scores[score_col], errors='coerce').dropna()
+            if len(score_values) > 0:
+                top_decile_threshold = score_values.quantile(0.9)
+                top_decile_values = score_values[score_values >= top_decile_threshold]
+                rs_top10_mean = top_decile_values.mean()
+                
+                if rs_top10_mean < min_regime_strength:
+                    print(f"  ⏭️  Skipping week {w_str}: regime_strength={rs_top10_mean:.4f} < threshold={min_regime_strength:.4f}")
+                    continue
+                else:
+                    print(f"  ✅ Trading week {w_str}: regime_strength={rs_top10_mean:.4f} >= threshold={min_regime_strength:.4f}")
+
         selected = select_top_with_sector_cap(scores, top_n=top_n, sector_cap=sector_cap, score_col=score_col)
         if selected.empty:
             continue
@@ -363,6 +381,7 @@ if __name__ == "__main__":
     ap.add_argument("--tc_bps", type=float, default=30.0, help="Round-trip transaction cost in bps, applied on turnover")
     ap.add_argument("--out_dir", default=None, help="Output directory for backtest artifacts (default: data/derived/backtest)")
     ap.add_argument("--skip_missing_scores", action="store_true", help="Skip weeks that have no scores_weekly.parquet instead of failing")
+    ap.add_argument("--min_regime_strength", type=float, default=None, help="Minimum regime strength (rs_top10_mean) to trade a week. Example: 1.317 for HIGH regime only")
     args = ap.parse_args()
 
     run_backtest(
@@ -376,4 +395,5 @@ if __name__ == "__main__":
         tc_roundtrip_bps=args.tc_bps,
         out_dir=Path(args.out_dir) if args.out_dir else None,
         skip_missing_scores=bool(args.skip_missing_scores),
+        min_regime_strength=args.min_regime_strength,
     )
